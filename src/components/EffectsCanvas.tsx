@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { EffectShader } from '../shaders/effectShader';
+import { EffectShader, BackgroundShader } from '../shaders/effectShader';
 import type { Point } from '../hooks/useHandTracker';
 
 interface XRayWindowProps {
@@ -11,8 +11,13 @@ interface XRayWindowProps {
   effectIndex: number;
   leftAttractor: Point;
   rightAttractor: Point;
+  leftVelocity: Point;
+  rightVelocity: Point;
+  leftDepth: number;
+  rightDepth: number;
   pinchLActive: boolean;
   pinchRActive: boolean;
+  bloomStrength: number;
 }
 
 const XRayWindow: React.FC<XRayWindowProps> = ({
@@ -22,8 +27,13 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
   effectIndex,
   leftAttractor,
   rightAttractor,
+  leftVelocity,
+  rightVelocity,
+  leftDepth,
+  rightDepth,
   pinchLActive,
-  pinchRActive
+  pinchRActive,
+  bloomStrength
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
@@ -64,8 +74,13 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
     // Pass interactive attractor positions & pinch strengths
     mat.uniforms.uLeftAttractor.value.set(leftAttractor.x, leftAttractor.y);
     mat.uniforms.uRightAttractor.value.set(rightAttractor.x, rightAttractor.y);
+    mat.uniforms.uLeftVelocity.value.set(leftVelocity.x, leftVelocity.y);
+    mat.uniforms.uRightVelocity.value.set(rightVelocity.x, rightVelocity.y);
     mat.uniforms.uLeftPinch.value = pinchLActive ? 1.0 : 0.0;
     mat.uniforms.uRightPinch.value = pinchRActive ? 1.0 : 0.0;
+    mat.uniforms.uLeftDepth.value = leftDepth;
+    mat.uniforms.uRightDepth.value = rightDepth;
+    mat.uniforms.uBloomStrength.value = bloomStrength;
 
     const corners = pointsRef.current;
     if (corners.length === 4) {
@@ -118,8 +133,13 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
     uResolution: { value: new THREE.Vector2(size.width, size.height) },
     uLeftAttractor: { value: new THREE.Vector2() },
     uRightAttractor: { value: new THREE.Vector2() },
+    uLeftVelocity: { value: new THREE.Vector2() },
+    uRightVelocity: { value: new THREE.Vector2() },
     uLeftPinch: { value: 0.0 },
-    uRightPinch: { value: 0.0 }
+    uRightPinch: { value: 0.0 },
+    uLeftDepth: { value: 0.0 },
+    uRightDepth: { value: 0.0 },
+    uBloomStrength: { value: 0.0 }
   });
 
   const geometryRef = useRef<THREE.PlaneGeometry | null>(null);
@@ -137,7 +157,7 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
   if (!geometryRef.current) return null;
 
   return (
-    <mesh ref={meshRef} geometry={geometryRef.current}>
+    <mesh ref={meshRef} geometry={geometryRef.current} position={[0, 0, 0.01]}>
       <shaderMaterial
         ref={materialRef}
         vertexShader={EffectShader.vertexShader}
@@ -151,6 +171,52 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
   );
 };
 
+// Full-Screen Background Video Plane Component
+interface BackgroundPlaneProps {
+  video: HTMLVideoElement;
+}
+
+const BackgroundPlane: React.FC<BackgroundPlaneProps> = ({ video }) => {
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
+  const videoTextureRef = useRef<THREE.VideoTexture | null>(null);
+
+  useEffect(() => {
+    const texture = new THREE.VideoTexture(video);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.format = THREE.RGBAFormat;
+    videoTextureRef.current = texture;
+
+    return () => {
+      texture.dispose();
+    };
+  }, [video]);
+
+  useFrame(() => {
+    if (materialRef.current && videoTextureRef.current) {
+      materialRef.current.uniforms.uTexture.value = videoTextureRef.current;
+    }
+  });
+
+  const uniforms = useRef({
+    uTexture: { value: null as THREE.Texture | null }
+  });
+
+  return (
+    <mesh position={[0, 0, 0]}>
+      <planeGeometry args={[2, 2]} />
+      <shaderMaterial
+        ref={materialRef}
+        vertexShader={BackgroundShader.vertexShader}
+        fragmentShader={BackgroundShader.fragmentShader}
+        uniforms={uniforms.current}
+        depthWrite={false}
+        depthTest={false}
+      />
+    </mesh>
+  );
+};
+
 interface EffectsCanvasProps {
   videoElement: HTMLVideoElement | null;
   pointsRef: React.MutableRefObject<Point[]>;
@@ -158,8 +224,13 @@ interface EffectsCanvasProps {
   effectIndex: number;
   leftAttractor: Point;
   rightAttractor: Point;
+  leftVelocity: Point;
+  rightVelocity: Point;
+  leftDepth: number;
+  rightDepth: number;
   pinchLActive: boolean;
   pinchRActive: boolean;
+  bloomStrength: number;
 }
 
 export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
@@ -169,8 +240,13 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
   effectIndex,
   leftAttractor,
   rightAttractor,
+  leftVelocity,
+  rightVelocity,
+  leftDepth,
+  rightDepth,
   pinchLActive,
-  pinchRActive
+  pinchRActive,
+  bloomStrength
 }) => {
   if (!videoElement) return null;
 
@@ -178,9 +254,10 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
     <div className="absolute inset-0 w-full h-full pointer-events-none z-10">
       <Canvas
         camera={{ position: [0, 0, 1] }}
-        gl={{ antialias: true, alpha: true, premultipliedAlpha: false }}
+        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true, premultipliedAlpha: false }}
         style={{ width: '100%', height: '100%', background: 'transparent' }}
       >
+        <BackgroundPlane video={videoElement} />
         <XRayWindow
           video={videoElement}
           pointsRef={pointsRef}
@@ -188,8 +265,13 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
           effectIndex={effectIndex}
           leftAttractor={leftAttractor}
           rightAttractor={rightAttractor}
+          leftVelocity={leftVelocity}
+          rightVelocity={rightVelocity}
+          leftDepth={leftDepth}
+          rightDepth={rightDepth}
           pinchLActive={pinchLActive}
           pinchRActive={pinchRActive}
+          bloomStrength={bloomStrength}
         />
       </Canvas>
     </div>
