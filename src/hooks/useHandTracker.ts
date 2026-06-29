@@ -217,6 +217,44 @@ export const useHandTracker = (
           const activeMode = (pinchL && pinchR) ? 'xray' : 'particle';
           setEffectMode(activeMode);
 
+          // 1. Calculate target points
+          let targetPoints: Point[] = [];
+
+          if (activeMode === 'xray') {
+            const pL_idx = handL[8];
+            const pL_thb = handL[4];
+            const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
+
+            const pR_idx = handR[8];
+            const pR_thb = handR[4];
+            const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
+
+            targetPoints = [
+              { x: cL.x, y: cL.y - 0.075 },
+              { x: cR.x, y: cR.y - 0.075 },
+              { x: cL.x, y: cL.y + 0.075 },
+              { x: cR.x, y: cR.y + 0.075 }
+            ];
+          } else {
+            targetPoints = [
+              handL[8],
+              handR[8],
+              handL[4],
+              handR[4]
+            ];
+          }
+
+          if (pointsRef.current.length !== 4) {
+            pointsRef.current = targetPoints;
+          } else {
+            pointsRef.current = pointsRef.current.map((prev, idx) => ({
+              x: prev.x + alpha * (targetPoints[idx].x - prev.x),
+              y: prev.y + alpha * (targetPoints[idx].y - prev.y)
+            }));
+          }
+          setPointsState([...pointsRef.current]);
+
+          // 2. Check clap gesture
           const pL_mcp = handL[9];
           const pR_mcp = handR[9];
           const dx_mcp = pR_mcp.x - pL_mcp.x;
@@ -231,44 +269,6 @@ export const useHandTracker = (
               playSwitchSound();
               onEffectSwitch();
             }
-            pointsRef.current = [];
-            setPointsState([]);
-          } else {
-            let targetPoints: Point[] = [];
-
-            if (activeMode === 'xray') {
-              const pL_idx = handL[8];
-              const pL_thb = handL[4];
-              const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
-
-              const pR_idx = handR[8];
-              const pR_thb = handR[4];
-              const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
-
-              targetPoints = [
-                { x: cL.x, y: cL.y - 0.075 },
-                { x: cR.x, y: cR.y - 0.075 },
-                { x: cL.x, y: cL.y + 0.075 },
-                { x: cR.x, y: cR.y + 0.075 }
-              ];
-            } else {
-              targetPoints = [
-                handL[8],
-                handR[8],
-                handL[4],
-                handR[4]
-              ];
-            }
-
-            if (pointsRef.current.length !== 4) {
-              pointsRef.current = targetPoints;
-            } else {
-              pointsRef.current = pointsRef.current.map((prev, idx) => ({
-                x: prev.x + alpha * (targetPoints[idx].x - prev.x),
-                y: prev.y + alpha * (targetPoints[idx].y - prev.y)
-              }));
-            }
-            setPointsState([...pointsRef.current]);
           }
         } else {
           // If we detect 1 hand, check grace period timer to prevent vanishing
