@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import { playSwitchSound } from '../utils/audio';
 
-export interface BoxCoords {
-  xMin: number;
-  yMin: number;
-  xMax: number;
-  yMax: number;
+export interface Point {
+  x: number;
+  y: number;
 }
 
 export const useHandTracker = (
@@ -16,13 +14,13 @@ export const useHandTracker = (
 ) => {
   const [modelsReady, setModelsReady] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [effectMode, setEffectMode] = useState<'particle' | 'xray'>('particle');
+  const [pointsState, setPointsState] = useState<Point[]>([]);
   
   const landmarkerRef = useRef<HandLandmarker | null>(null);
-  const boxRef = useRef<[number, number, number, number]>([0, 0, 0, 0]); // xMin, yMin, xMax, yMax
+  const pointsRef = useRef<Point[]>([]);
   const lastClapTimeRef = useRef<number>(0);
-
-  // EMA smoothing parameter (alpha)
-  const alpha = 0.25;
+  const alpha = 0.25; // EMA smoothing factor
 
   useEffect(() => {
     let active = true;
@@ -48,7 +46,7 @@ export const useHandTracker = (
       } catch (err: any) {
         console.error(err);
         if (active) {
-          setErrorMsg('Failed to initialize MediaPipe models. Check internet connection or CORS.');
+          setErrorMsg('Failed to initialize MediaPipe models. Check connection.');
         }
       }
     };
@@ -63,23 +61,22 @@ export const useHandTracker = (
   }, []);
 
   const drawSkeleton = (ctx: CanvasRenderingContext2D, landmarks: any[]) => {
-    // Draw connections
     const connections = [
-      [0, 1], [1, 2], [2, 3], [3, 4], // thumb
-      [0, 5], [5, 6], [6, 7], [7, 8], // index
-      [9, 10], [10, 11], [11, 12],     // middle finger joints
-      [0, 17], [17, 18], [18, 19], [19, 20], // pinky
-      [5, 9], [9, 13], [13, 17], // palm base
-      [0, 13], // wrist to ring base
-      [13, 14], [14, 15], [15, 16], // ring finger
+      [0, 1], [1, 2], [2, 3], [3, 4],
+      [0, 5], [5, 6], [6, 7], [7, 8],
+      [9, 10], [10, 11], [11, 12],
+      [0, 17], [17, 18], [18, 19], [19, 20],
+      [5, 9], [9, 13], [13, 17], [0, 13],
+      [13, 14], [14, 15], [15, 16],
     ];
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.lineWidth = 2;
-    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.shadowBlur = 3;
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
 
     landmarks.forEach((hand) => {
-      // Connections
       connections.forEach(([i, j]) => {
         if (hand[i] && hand[j]) {
           ctx.beginPath();
@@ -89,13 +86,22 @@ export const useHandTracker = (
         }
       });
 
-      // Nodes
       hand.forEach((lm: any) => {
         ctx.beginPath();
-        ctx.arc((1 - lm.x) * ctx.canvas.width, lm.y * ctx.canvas.height, 3, 0, 2 * Math.PI);
+        ctx.arc((1 - lm.x) * ctx.canvas.width, lm.y * ctx.canvas.height, 1.5, 0, 2 * Math.PI);
         ctx.fill();
       });
     });
+
+    // Reset shadow
+    ctx.shadowBlur = 0;
+  };
+
+  const isPinching = (hand: any) => {
+    // Landmark 8: Index Tip, Landmark 4: Thumb Tip
+    const dx = hand[8].x - hand[4].x;
+    const dy = hand[8].y - hand[4].y;
+    return Math.sqrt(dx * dx + dy * dy) < 0.20;
   };
 
   const processFrame = () => {
@@ -105,7 +111,6 @@ export const useHandTracker = (
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Match canvas width/height to rendering container
     if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
       canvas.width = video.clientWidth;
       canvas.height = video.clientHeight;
@@ -120,60 +125,88 @@ export const useHandTracker = (
         drawSkeleton(ctx, results.landmarks);
 
         if (results.landmarks.length === 2) {
-          const hand0 = results.landmarks[0];
-          const hand1 = results.landmarks[1];
+          // Sort hands left-to-right based on x coordinates (which are mirrored, so 1 - x is actual screen position)
+          const sortedHands = [...results.landmarks].sort((a, b) => (1 - b[0].x) - (1 - a[0].x));
+          const handL = sortedHands[0];
+          const handR = sortedHands[1];
 
-          // Landmark 9: Middle finger MCP
-          const p0 = hand0[9];
-          const p1 = hand1[9];
+          const pinchL = isPinching(handL);
+          const pinchR = isPinching(handR);
 
-          if (p0 && p1) {
-            const dx = p1.x - p0.x;
-            const dy = p1.y - p0.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+          // Update active Mode
+          const activeMode = (pinchL && pinchR) ? 'xray' : 'particle';
+          setEffectMode(activeMode);
 
-            // Clap Switch detection
-            if (dist < 0.1) {
-              const now = performance.now();
-              if (now - lastClapTimeRef.current > 1000) {
-                lastClapTimeRef.current = now;
-                playSwitchSound();
-                onEffectSwitch();
-              }
-              // Hide box during clap
-              boxRef.current = [0, 0, 0, 0];
+          // Find clap distance using Middle Finger MCP (9)
+          const pL_mcp = handL[9];
+          const pR_mcp = handR[9];
+          const dx_mcp = pR_mcp.x - pL_mcp.x;
+          const dy_mcp = pR_mcp.y - pL_mcp.y;
+          const clapDist = Math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp);
+
+          if (clapDist < 0.1 && activeMode !== 'xray') {
+            const now = performance.now();
+            if (now - lastClapTimeRef.current > 1000) {
+              lastClapTimeRef.current = now;
+              playSwitchSound();
+              onEffectSwitch();
+            }
+            pointsRef.current = [];
+            setPointsState([]);
+          } else {
+            // Target corners depending on active mode
+            let targetPoints: Point[] = [];
+
+            if (activeMode === 'xray') {
+              // X-Ray Mode: horizontal strip centered on pinch midpoints
+              // Pinch L center
+              const pL_idx = handL[8];
+              const pL_thb = handL[4];
+              const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
+
+              // Pinch R center
+              const pR_idx = handR[8];
+              const pR_thb = handR[4];
+              const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
+
+              // Offset by 7.5% screen height
+              targetPoints = [
+                { x: cL.x, y: cL.y - 0.075 }, // Top-Left
+                { x: cR.x, y: cR.y - 0.075 }, // Top-Right
+                { x: cL.x, y: cL.y + 0.075 }, // Bottom-Left
+                { x: cR.x, y: cR.y + 0.075 }  // Bottom-Right
+              ];
             } else {
-              // Bounding box dimensions
-              const cx = (p0.x + p1.x) / 2;
-              const cy = (p0.y + p1.y) / 2;
-              const w = dist * 1.2;
-              const h = w * 0.8;
-
-              // Normalized bounds
-              const targetXMin = cx - w / 2;
-              const targetYMin = cy - h / 2;
-              const targetXMax = cx + w / 2;
-              const targetYMax = cy + h / 2;
-
-              // Apply EMA smoothing
-              const [prevXMin, prevYMin, prevXMax, prevYMax] = boxRef.current;
-              boxRef.current = [
-                prevXMin + alpha * (targetXMin - prevXMin),
-                prevYMin + alpha * (targetYMin - prevYMin),
-                prevXMax + alpha * (targetXMax - prevXMax),
-                prevYMax + alpha * (targetYMax - prevYMax),
+              // Particle Mode: deformed quadrilateral based on index tips and thumbs
+              targetPoints = [
+                handL[8], // Top-Left: Left Index tip
+                handR[8], // Top-Right: Right Index tip
+                handL[4], // Bottom-Left: Left Thumb tip
+                handR[4]  // Bottom-Right: Right Thumb tip
               ];
             }
+
+            // Apply EMA Smoothing
+            if (pointsRef.current.length !== 4) {
+              pointsRef.current = targetPoints;
+            } else {
+              pointsRef.current = pointsRef.current.map((prev, idx) => ({
+                x: prev.x + alpha * (targetPoints[idx].x - prev.x),
+                y: prev.y + alpha * (targetPoints[idx].y - prev.y)
+              }));
+            }
+            setPointsState([...pointsRef.current]);
           }
         } else {
-          // If not exactly 2 hands, clear the box
-          boxRef.current = [0, 0, 0, 0];
+          pointsRef.current = [];
+          setPointsState([]);
         }
       } else {
-        boxRef.current = [0, 0, 0, 0];
+        pointsRef.current = [];
+        setPointsState([]);
       }
     }
   };
 
-  return { modelsReady, errorMsg, boxRef, processFrame, setErrorMsg };
+  return { modelsReady, errorMsg, effectMode, pointsState, pointsRef, processFrame, setErrorMsg };
 };
