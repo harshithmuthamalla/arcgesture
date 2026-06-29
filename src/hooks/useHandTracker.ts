@@ -17,10 +17,16 @@ export const useHandTracker = (
   const [effectMode, setEffectMode] = useState<'particle' | 'xray'>('particle');
   const [pointsState, setPointsState] = useState<Point[]>([]);
   
+  // Interactive coordinates states
+  const [leftAttractor, setLeftAttractor] = useState<Point>({ x: 0.5, y: 0.5 });
+  const [rightAttractor, setRightAttractor] = useState<Point>({ x: 0.5, y: 0.5 });
+  const [pinchLActive, setPinchLActive] = useState(false);
+  const [pinchRActive, setPinchRActive] = useState(false);
+
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const pointsRef = useRef<Point[]>([]);
   const lastClapTimeRef = useRef<number>(0);
-  const alpha = 0.25; // EMA smoothing factor
+  const alpha = 0.25;
 
   useEffect(() => {
     let active = true;
@@ -93,12 +99,10 @@ export const useHandTracker = (
       });
     });
 
-    // Reset shadow
     ctx.shadowBlur = 0;
   };
 
   const isPinching = (hand: any) => {
-    // Landmark 8: Index Tip, Landmark 4: Thumb Tip
     const dx = hand[8].x - hand[4].x;
     const dy = hand[8].y - hand[4].y;
     return Math.sqrt(dx * dx + dy * dy) < 0.20;
@@ -125,7 +129,6 @@ export const useHandTracker = (
         drawSkeleton(ctx, results.landmarks);
 
         if (results.landmarks.length === 2) {
-          // Sort hands left-to-right based on x coordinates (which are mirrored, so 1 - x is actual screen position)
           const sortedHands = [...results.landmarks].sort((a, b) => (1 - b[0].x) - (1 - a[0].x));
           const handL = sortedHands[0];
           const handR = sortedHands[1];
@@ -133,11 +136,17 @@ export const useHandTracker = (
           const pinchL = isPinching(handL);
           const pinchR = isPinching(handR);
 
-          // Update active Mode
+          setPinchLActive(pinchL);
+          setPinchRActive(pinchR);
+
+          // Left index tip (landmark 8)
+          setLeftAttractor({ x: handL[8].x, y: handL[8].y });
+          // Right index tip (landmark 8)
+          setRightAttractor({ x: handR[8].x, y: handR[8].y });
+
           const activeMode = (pinchL && pinchR) ? 'xray' : 'particle';
           setEffectMode(activeMode);
 
-          // Find clap distance using Middle Finger MCP (9)
           const pL_mcp = handL[9];
           const pR_mcp = handR[9];
           const dx_mcp = pR_mcp.x - pL_mcp.x;
@@ -154,39 +163,32 @@ export const useHandTracker = (
             pointsRef.current = [];
             setPointsState([]);
           } else {
-            // Target corners depending on active mode
             let targetPoints: Point[] = [];
 
             if (activeMode === 'xray') {
-              // X-Ray Mode: horizontal strip centered on pinch midpoints
-              // Pinch L center
               const pL_idx = handL[8];
               const pL_thb = handL[4];
               const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
 
-              // Pinch R center
               const pR_idx = handR[8];
               const pR_thb = handR[4];
               const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
 
-              // Offset by 7.5% screen height
               targetPoints = [
-                { x: cL.x, y: cL.y - 0.075 }, // Top-Left
-                { x: cR.x, y: cR.y - 0.075 }, // Top-Right
-                { x: cL.x, y: cL.y + 0.075 }, // Bottom-Left
-                { x: cR.x, y: cR.y + 0.075 }  // Bottom-Right
+                { x: cL.x, y: cL.y - 0.075 },
+                { x: cR.x, y: cR.y - 0.075 },
+                { x: cL.x, y: cL.y + 0.075 },
+                { x: cR.x, y: cR.y + 0.075 }
               ];
             } else {
-              // Particle Mode: deformed quadrilateral based on index tips and thumbs
               targetPoints = [
-                handL[8], // Top-Left: Left Index tip
-                handR[8], // Top-Right: Right Index tip
-                handL[4], // Bottom-Left: Left Thumb tip
-                handR[4]  // Bottom-Right: Right Thumb tip
+                handL[8],
+                handR[8],
+                handL[4],
+                handR[4]
               ];
             }
 
-            // Apply EMA Smoothing
             if (pointsRef.current.length !== 4) {
               pointsRef.current = targetPoints;
             } else {
@@ -200,13 +202,29 @@ export const useHandTracker = (
         } else {
           pointsRef.current = [];
           setPointsState([]);
+          setPinchLActive(false);
+          setPinchRActive(false);
         }
       } else {
         pointsRef.current = [];
         setPointsState([]);
+        setPinchLActive(false);
+        setPinchRActive(false);
       }
     }
   };
 
-  return { modelsReady, errorMsg, effectMode, pointsState, pointsRef, processFrame, setErrorMsg };
+  return {
+    modelsReady,
+    errorMsg,
+    effectMode,
+    pointsState,
+    pointsRef,
+    leftAttractor,
+    rightAttractor,
+    pinchLActive,
+    pinchRActive,
+    processFrame,
+    setErrorMsg
+  };
 };
