@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: arcgesture-desktop-operator
+    env: static
+    buildCommand: npm run build
+    publishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-store, no-cache, must-revalidate, max-age=0
