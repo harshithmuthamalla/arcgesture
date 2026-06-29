@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EffectShader } from '../shaders/effectShader';
-import { Point } from '../hooks/useHandTracker';
+import type { Point } from '../hooks/useHandTracker';
 
 interface XRayWindowProps {
   video: HTMLVideoElement;
