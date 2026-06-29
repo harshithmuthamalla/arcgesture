@@ -9,15 +9,28 @@ interface XRayWindowProps {
   pointsRef: React.MutableRefObject<Point[]>;
   effectMode: 'particle' | 'xray';
   effectIndex: number;
+  leftAttractor: Point;
+  rightAttractor: Point;
+  pinchLActive: boolean;
+  pinchRActive: boolean;
 }
 
-const XRayWindow: React.FC<XRayWindowProps> = ({ video, pointsRef, effectMode, effectIndex }) => {
+const XRayWindow: React.FC<XRayWindowProps> = ({
+  video,
+  pointsRef,
+  effectMode,
+  effectIndex,
+  leftAttractor,
+  rightAttractor,
+  pinchLActive,
+  pinchRActive
+}) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const videoTextureRef = useRef<THREE.VideoTexture | null>(null);
   
   const { size } = useThree();
-  const currentModeRef = useRef<number>(0.0); // Smooth uMode transition
+  const currentModeRef = useRef<number>(0.0);
 
   useEffect(() => {
     const texture = new THREE.VideoTexture(video);
@@ -38,7 +51,6 @@ const XRayWindow: React.FC<XRayWindowProps> = ({ video, pointsRef, effectMode, e
     const mat = materialRef.current;
     const geometry = mesh.geometry as THREE.BufferGeometry;
 
-    // Update uMode transition
     const targetMode = effectMode === 'xray' ? 1.0 : 0.0;
     currentModeRef.current += (targetMode - currentModeRef.current) * 0.15;
 
@@ -49,13 +61,17 @@ const XRayWindow: React.FC<XRayWindowProps> = ({ video, pointsRef, effectMode, e
     mat.uniforms.uEffectIndex.value = effectIndex;
     mat.uniforms.uResolution.value.set(size.width, size.height);
 
+    // Pass interactive attractor positions & pinch strengths
+    mat.uniforms.uLeftAttractor.value.set(leftAttractor.x, leftAttractor.y);
+    mat.uniforms.uRightAttractor.value.set(rightAttractor.x, rightAttractor.y);
+    mat.uniforms.uLeftPinch.value = pinchLActive ? 1.0 : 0.0;
+    mat.uniforms.uRightPinch.value = pinchRActive ? 1.0 : 0.0;
+
     const corners = pointsRef.current;
     if (corners.length === 4) {
       mesh.visible = true;
 
-      // Map corner points to Three.js coordinates
       const mappedCorners = corners.map((p) => {
-        // Mirrored camera horizontal coordinate
         const mx = 1.0 - p.x;
         return {
           x: mx * 2.0 - 1.0,
@@ -63,11 +79,10 @@ const XRayWindow: React.FC<XRayWindowProps> = ({ video, pointsRef, effectMode, e
         };
       });
 
-      // bilinear points
-      const bl = mappedCorners[2]; // Bottom-Left
-      const br = mappedCorners[3]; // Bottom-Right
-      const tl = mappedCorners[0]; // Top-Left
-      const tr = mappedCorners[1]; // Top-Right
+      const bl = mappedCorners[2];
+      const br = mappedCorners[3];
+      const tl = mappedCorners[0];
+      const tr = mappedCorners[1];
 
       const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
       const uvAttr = geometry.getAttribute('uv') as THREE.BufferAttribute;
@@ -75,17 +90,14 @@ const XRayWindow: React.FC<XRayWindowProps> = ({ video, pointsRef, effectMode, e
 
       if (posAttr && uvAttr && originalUvAttr) {
         for (let i = 0; i < posAttr.count; i++) {
-          // Read original grid uv coordinates
           const u = originalUvAttr.getX(i);
           const v = originalUvAttr.getY(i);
 
-          // Bilinear interpolation
           const vx = (1 - u) * (1 - v) * bl.x + u * (1 - v) * br.x + (1 - u) * v * tl.x + u * v * tr.x;
           const vy = (1 - u) * (1 - v) * bl.y + u * (1 - v) * br.y + (1 - u) * v * tl.y + u * v * tr.y;
 
           posAttr.setXYZ(i, vx, vy, 0.0);
 
-          // Screen space UV coordinates matching vertex position on screen
           const screenU = (vx + 1.0) / 2.0;
           const screenV = (vy + 1.0) / 2.0;
           uvAttr.setXY(i, screenU, screenV);
@@ -103,14 +115,16 @@ const XRayWindow: React.FC<XRayWindowProps> = ({ video, pointsRef, effectMode, e
     uTime: { value: 0 },
     uMode: { value: 0.0 },
     uEffectIndex: { value: 0 },
-    uResolution: { value: new THREE.Vector2(size.width, size.height) }
+    uResolution: { value: new THREE.Vector2(size.width, size.height) },
+    uLeftAttractor: { value: new THREE.Vector2() },
+    uRightAttractor: { value: new THREE.Vector2() },
+    uLeftPinch: { value: 0.0 },
+    uRightPinch: { value: 0.0 }
   });
 
-  // Setup subdivided geometry
   const geometryRef = useRef<THREE.PlaneGeometry | null>(null);
   useEffect(() => {
     const geo = new THREE.PlaneGeometry(2, 2, 32, 32);
-    // Duplicate initial uv to 'originalUv' so we always have a reference of grid coordinate
     const uvs = geo.getAttribute('uv').clone();
     geo.setAttribute('originalUv', uvs);
     geometryRef.current = geo;
@@ -142,13 +156,21 @@ interface EffectsCanvasProps {
   pointsRef: React.MutableRefObject<Point[]>;
   effectMode: 'particle' | 'xray';
   effectIndex: number;
+  leftAttractor: Point;
+  rightAttractor: Point;
+  pinchLActive: boolean;
+  pinchRActive: boolean;
 }
 
 export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
   videoElement,
   pointsRef,
   effectMode,
-  effectIndex
+  effectIndex,
+  leftAttractor,
+  rightAttractor,
+  pinchLActive,
+  pinchRActive
 }) => {
   if (!videoElement) return null;
 
@@ -164,6 +186,10 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
           pointsRef={pointsRef}
           effectMode={effectMode}
           effectIndex={effectIndex}
+          leftAttractor={leftAttractor}
+          rightAttractor={rightAttractor}
+          pinchLActive={pinchLActive}
+          pinchRActive={pinchRActive}
         />
       </Canvas>
     </div>
