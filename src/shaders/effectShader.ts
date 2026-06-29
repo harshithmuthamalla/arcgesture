@@ -9,12 +9,12 @@ export const EffectShader = {
   fragmentShader: `
     uniform sampler2D uTexture;
     uniform float uTime;
-    uniform vec4 uBox; // [xMin, yMin, xMax, yMax]
-    uniform float uEffect;
+    uniform float uMode; // Blends Particle (0.0) -> X-Ray (1.0)
+    uniform float uEffectIndex; // Cycle index for particle mode
     uniform vec2 uResolution;
     varying vec2 vUv;
 
-    // 2D Simplex Noise generator (required by Simplex effects)
+    // 2D Simplex Noise generator
     vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
 
     float snoise(vec2 v){
@@ -46,134 +46,167 @@ export const EffectShader = {
       return 130.0 * dot(m, vecValues * norm);
     }
 
+    // Hash function for grain noise
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
     void main() {
-      // Horizontally mirror UV coordinates
-      vec2 mirroredUv = vec2(1.0 - vUv.x, vUv.y);
-
-      // Pre-calculate all texture samples at the top (Critical WebGL Performance Rule)
-      vec3 baseColor = texture2D(uTexture, mirroredUv).rgb;
-      float baseLum = dot(baseColor, vec3(0.299, 0.587, 0.114));
-
-      // Effect 1: Burning texture coordinates
-      vec2 burnUv = mirroredUv + snoise(mirroredUv * 10.0 + uTime * 2.0) * 0.05;
-      vec3 burnColor = texture2D(uTexture, burnUv).rgb;
-      float burnLum = dot(burnColor, vec3(0.299, 0.587, 0.114));
-
-      // Effect 4: Pixelated
-      vec2 grid = vec2(80.0, 80.0 * (uResolution.y / uResolution.x));
-      vec2 blockUv = floor(mirroredUv * grid) / grid;
-      vec3 pixelColor = texture2D(uTexture, blockUv).rgb;
-      float pixelLum = dot(pixelColor, vec3(0.299, 0.587, 0.114));
-
-      // Effect 5: Glitch Chromatic Aberration
-      float offsetR = snoise(vec2(uTime * 15.0, mirroredUv.y * 30.0)) * 0.012;
-      float offsetB = -snoise(vec2(uTime * 10.0, mirroredUv.y * 20.0)) * 0.012;
-      vec3 glitchColor = vec3(
-        texture2D(uTexture, clamp(mirroredUv + vec2(offsetR, 0.0), 0.0, 1.0)).r,
-        texture2D(uTexture, mirroredUv).g,
-        texture2D(uTexture, clamp(mirroredUv + vec2(offsetB, 0.0), 0.0, 1.0)).b
-      );
-
-      // Effect 6: Sobel Edges neighbor pre-sampling
-      float dx = 1.0 / uResolution.x;
-      float dy = 1.0 / uResolution.y;
-      float s00 = dot(texture2D(uTexture, mirroredUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s01 = dot(texture2D(uTexture, mirroredUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s02 = dot(texture2D(uTexture, mirroredUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s10 = dot(texture2D(uTexture, mirroredUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-      float s12 = dot(texture2D(uTexture, mirroredUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-      float s20 = dot(texture2D(uTexture, mirroredUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s21 = dot(texture2D(uTexture, mirroredUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s22 = dot(texture2D(uTexture, mirroredUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      // Input texture UV coordinates (already screen-mapped in EffectsCanvas)
+      vec3 originalColor = texture2D(uTexture, vUv).rgb;
+      float baseLum = dot(originalColor, vec3(0.299, 0.587, 0.114));
 
       // ----------------------------------------------------
-      // Bounding Box check (using un-mirrored UV to align with skeleton tracking)
+      // MODE 0: Cycle effects (inside quadrilateral)
       // ----------------------------------------------------
-      if (uBox.z <= 0.0 || 
-          vUv.x < uBox.x || vUv.x > uBox.z || 
-          vUv.y < uBox.y || vUv.y > uBox.w) {
-        gl_FragColor = vec4(baseColor, 1.0);
-        return;
+      vec3 quadColor = originalColor;
+
+      // Effect 0: Standard Particle Mode (from PDF)
+      // 1. Contour Lines (Blue glow bands)
+      float bands = fract(baseLum * 10.0 - uTime * 0.5);
+      float contours = smoothstep(0.4, 0.5, bands) - smoothstep(0.5, 0.6, bands);
+      vec3 contourColor = vec3(0.05, 0.3, 0.9) * contours * 1.5;
+
+      // 2. Twinkling grid of squares (90x90 grid)
+      vec2 gridRes = vec2(90.0, 90.0 * (uResolution.y / uResolution.x));
+      vec2 cellPos = fract(vUv * gridRes);
+      vec2 cellIndex = floor(vUv * gridRes);
+      
+      float gridVal = 0.0;
+      if (cellPos.x > 0.35 && cellPos.x < 0.65 && cellPos.y > 0.35 && cellPos.y < 0.65) {
+        float strobe = sin(uTime * 15.0 + cellIndex.x * 0.5 + cellIndex.y * 0.3) * 0.5 + 0.5;
+        gridVal = strobe;
       }
+      
+      // 3. Color Cycling (Magenta -> Yellow -> White at 15Hz)
+      float phase = cellIndex.x * 0.1 + cellIndex.y * 0.05;
+      float cycle = fract(uTime * 15.0 / 3.0 + phase) * 3.0;
+      vec3 particleColor;
+      if (cycle < 1.0) {
+        particleColor = mix(vec3(1.0, 0.2, 0.6), vec3(1.0, 0.9, 0.2), cycle);
+      } else if (cycle < 2.0) {
+        particleColor = mix(vec3(1.0, 0.9, 0.2), vec3(1.0, 1.0, 1.0), cycle - 1.0);
+      } else {
+        particleColor = mix(vec3(1.0, 1.0, 1.0), vec3(1.0, 0.2, 0.6), cycle - 2.0);
+      }
+      vec3 gridOutput = particleColor * gridVal;
 
-      // Draw active effect
-      vec3 finalColor = baseColor;
+      // 4. Subject Glow
+      vec3 subjectGlow = vec3(0.1, 0.3, 0.9) * smoothstep(0.2, 0.8, baseLum) * 0.6;
 
-      if (uEffect < 0.5) {
-        // Burning gradient
+      vec3 particleFinalColor = originalColor * 0.3 + contourColor + gridOutput + subjectGlow;
+
+      // Glitch helpers (Pre-calculated for use across modes)
+      float offsetR = snoise(vec2(uTime * 15.0, vUv.y * 30.0)) * 0.012;
+      float offsetB = -snoise(vec2(uTime * 10.0, vUv.y * 20.0)) * 0.012;
+
+      if (uEffectIndex < 0.5) {
+        quadColor = particleFinalColor;
+      } else if (uEffectIndex < 1.5) {
+        // Burning Effect
+        vec2 burnUv = vUv + snoise(vUv * 10.0 + uTime * 2.0) * 0.05;
+        float burnLum = dot(texture2D(uTexture, burnUv).rgb, vec3(0.299, 0.587, 0.114));
         vec3 col0 = vec3(0.1, 0.0, 0.0);
         vec3 col1 = vec3(1.0, 0.0, 0.0);
         vec3 col2 = vec3(1.0, 0.5, 0.0);
         vec3 col3 = vec3(1.0, 1.0, 0.0);
-        
-        vec3 burnGrad;
         if (burnLum < 0.33) {
-          burnGrad = mix(col0, col1, burnLum / 0.33);
+          quadColor = mix(col0, col1, burnLum / 0.33);
         } else if (burnLum < 0.66) {
-          burnGrad = mix(col1, col2, (burnLum - 0.33) / 0.33);
+          quadColor = mix(col1, col2, (burnLum - 0.33) / 0.33);
         } else {
-          burnGrad = mix(col2, col3, (burnLum - 0.66) / 0.34);
+          quadColor = mix(col2, col3, (burnLum - 0.66) / 0.34);
         }
-        finalColor = burnGrad;
-
-      } else if (uEffect < 1.5) {
-        // Stark Glow Silhouette
+      } else if (uEffectIndex < 2.5) {
+        // Glow Silhouette
         float contrastLum = pow(baseLum, 1.2) * 1.5;
-        float edgeNoise = snoise(mirroredUv * 200.0 + uTime * 0.5) * 0.15;
+        float edgeNoise = snoise(vUv * 200.0 + uTime * 0.5) * 0.15;
         float core = smoothstep(0.5 + edgeNoise, 0.7 + edgeNoise, contrastLum);
         float halo = smoothstep(0.2 + edgeNoise, 0.6 + edgeNoise, contrastLum);
-        
-        vec3 haloColor = vec3(0.4, 0.9, 1.0); // Bright Cyan
-        vec3 haloMix = mix(vec3(0.0), haloColor, halo);
-        finalColor = mix(haloMix, vec3(1.0), core);
-
-      } else if (uEffect < 2.5) {
-        // Thermal Ramp
+        quadColor = mix(mix(vec3(0.0), vec3(0.4, 0.9, 1.0), halo), vec3(1.0), core);
+      } else if (uEffectIndex < 3.5) {
+        // Thermal
         float t = clamp((baseLum - 0.1) * 1.2, 0.0, 1.0);
-        vec3 thermalColor;
         if (t < 0.25) {
-          thermalColor = mix(vec3(0.0, 0.0, 0.2), vec3(0.1, 0.0, 1.0), t / 0.25);
+          quadColor = mix(vec3(0.0, 0.0, 0.2), vec3(0.1, 0.0, 1.0), t / 0.25);
         } else if (t < 0.5) {
-          thermalColor = mix(vec3(0.1, 0.0, 1.0), vec3(0.0, 1.0, 0.0), (t - 0.25) / 0.25);
+          quadColor = mix(vec3(0.1, 0.0, 1.0), vec3(0.0, 1.0, 0.0), (t - 0.25) / 0.25);
         } else if (t < 0.75) {
-          thermalColor = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.9, 0.0), (t - 0.5) / 0.25);
+          quadColor = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.9, 0.0), (t - 0.5) / 0.25);
         } else {
-          thermalColor = mix(vec3(1.0, 0.9, 0.0), vec3(1.0, 0.0, 0.0), (t - 0.75) / 0.25);
+          quadColor = mix(vec3(1.0, 0.9, 0.0), vec3(1.0, 0.0, 0.0), (t - 0.75) / 0.25);
         }
-        finalColor = thermalColor;
-
-      } else if (uEffect < 3.5) {
-        // Pixelated Grid Circle Dot-matrix
-        float cellDist = distance(fract(mirroredUv * grid), vec2(0.5));
-        if (cellDist < 0.35) {
-          finalColor = pixelLum > 0.25 ? vec3(0.0, 1.0, 0.0) : vec3(0.0);
-        } else {
-          finalColor = vec3(0.0, 0.1, 0.0);
-        }
-
-      } else if (uEffect < 4.5) {
+      } else if (uEffectIndex < 4.5) {
+        // Pixelated
+        vec2 dGrid = vec2(80.0, 80.0 * (uResolution.y / uResolution.x));
+        vec2 blockUv = floor(vUv * dGrid) / dGrid;
+        float dPixelLum = dot(texture2D(uTexture, blockUv).rgb, vec3(0.299, 0.587, 0.114));
+        float cellDist = distance(fract(vUv * dGrid), vec2(0.5));
+        quadColor = (cellDist < 0.35) ? (dPixelLum > 0.25 ? vec3(0.0, 1.0, 0.0) : vec3(0.0)) : vec3(0.0, 0.1, 0.0);
+      } else if (uEffectIndex < 5.5) {
         // Glitch
-        glitchColor -= sin(mirroredUv.y * 800.0 + uTime * 10.0) * 0.05;
-        finalColor = glitchColor;
-
+        quadColor = vec3(
+          texture2D(uTexture, clamp(vUv + vec2(offsetR, 0.0), 0.0, 1.0)).r,
+          texture2D(uTexture, vUv).g,
+          texture2D(uTexture, clamp(vUv + vec2(offsetB, 0.0), 0.0, 1.0)).b
+        );
+        quadColor -= sin(vUv.y * 800.0 + uTime * 10.0) * 0.05;
       } else {
-        // Neon Edges (Sobel edge filter calculation)
+        // Neon Edges
+        float dx = 1.0 / uResolution.x;
+        float dy = 1.0 / uResolution.y;
+        float s00 = dot(texture2D(uTexture, vUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s02 = dot(texture2D(uTexture, vUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s20 = dot(texture2D(uTexture, vUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s22 = dot(texture2D(uTexture, vUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s10 = dot(texture2D(uTexture, vUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+        float s12 = dot(texture2D(uTexture, vUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+        float s01 = dot(texture2D(uTexture, vUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s21 = dot(texture2D(uTexture, vUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
         float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
         float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
         float edgeVal = sqrt(sx * sx + sy * sy);
-        
-        vec3 neonColor = vec3(0.1, 1.0, 0.8) * edgeVal * 2.5;
-        finalColor = mix(baseColor * 0.3, neonColor, 0.7);
+        quadColor = mix(originalColor * 0.3, vec3(0.1, 1.0, 0.8) * edgeVal * 2.5, 0.7);
       }
 
-      // Draw Border Overlay (thickness 0.005)
-      float borderThickness = 0.005;
-      if (vUv.x < uBox.x + borderThickness || vUv.x > uBox.z - borderThickness || 
-          vUv.y < uBox.y + borderThickness || vUv.y > uBox.w - borderThickness) {
-        finalColor = mix(finalColor, vec3(1.0), 0.95);
-      }
+      // ----------------------------------------------------
+      // MODE 1: X-Ray Mode (from PDF)
+      // ----------------------------------------------------
+      // 1. Base Volume Blue space
+      vec3 baseBlue = vec3(0.1, 0.4, 0.85);
+      vec3 darkBlue = vec3(0.02, 0.05, 0.2);
+      vec3 xrayVolume = mix(baseBlue, darkBlue, baseLum);
 
-      gl_FragColor = vec4(finalColor, 1.0);
+      // 2. Cyan Edges (Sobel edge detection)
+      float dx = 1.0 / uResolution.x;
+      float dy = 1.0 / uResolution.y;
+      float s00 = dot(texture2D(uTexture, vUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s02 = dot(texture2D(uTexture, vUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s20 = dot(texture2D(uTexture, vUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s22 = dot(texture2D(uTexture, vUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s10 = dot(texture2D(uTexture, vUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+      float s12 = dot(texture2D(uTexture, vUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+      float s01 = dot(texture2D(uTexture, vUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s21 = dot(texture2D(uTexture, vUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
+      float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
+      float edgeXray = sqrt(sx * sx + sy * sy);
+      vec3 cyanEdges = vec3(0.0, 0.9, 1.0) * edgeXray * 2.0;
+
+      // 3. Film Grain
+      float grainNoise = hash(vUv + uTime * 100.0) * 0.1 - 0.05;
+
+      // 4. Scanlines
+      float scanline = sin(vUv.y * uResolution.y * 2.0) * 0.05;
+
+      vec3 xrayFinalColor = clamp(xrayVolume + cyanEdges + grainNoise - scanline, 0.0, 1.0);
+
+      // ----------------------------------------------------
+      // Blending
+      // ----------------------------------------------------
+      vec3 blendedColor = mix(quadColor, xrayFinalColor, uMode);
+
+      gl_FragColor = vec4(blendedColor, 0.95);
     }
   `
 };
