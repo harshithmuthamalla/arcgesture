@@ -46,6 +46,10 @@ export default function App() {
     effectMode,
     pointsState,
     pointsRef,
+    leftAttractor,
+    rightAttractor,
+    pinchLActive,
+    pinchRActive,
     processFrame,
     setErrorMsg
   } = useHandTracker(videoRef, canvasRef, triggerEffectSwitch);
@@ -107,7 +111,44 @@ export default function App() {
     };
   }, [modelsReady, videoReady, processFrame]);
 
-  // Loading / Error overlays
+  // Animated wave offset calculation for the SVG Laser path
+  const [laserPath, setLaserPath] = useState('');
+  useEffect(() => {
+    let animFrame: number;
+    
+    const updateLaser = () => {
+      if (pointsState.length === 4) {
+        // Container-relative coords
+        const container = document.getElementById('layout-container');
+        if (container) {
+          const rect = container.getBoundingClientRect();
+          const cxL = (1.0 - leftAttractor.x) * rect.width;
+          const cyL = leftAttractor.y * rect.height;
+          const cxR = (1.0 - rightAttractor.x) * rect.width;
+          const cyR = rightAttractor.y * rect.height;
+
+          // Midpoint
+          const midX = (cxL + cxR) / 2;
+          const midY = (cyL + cyR) / 2;
+
+          // Add animated high-voltage electrical jitter
+          const time = performance.now() * 0.05;
+          const offset = Math.sin(time) * 15 + Math.cos(time * 2.3) * 5;
+
+          // Quadratic Bezier curve
+          setLaserPath(`M ${cxL},${cyL} Q ${midX},${midY - 40 + offset} ${cxR},${cyR}`);
+        }
+      }
+      animFrame = requestAnimationFrame(updateLaser);
+    };
+
+    if (modelsReady && videoReady) {
+      animFrame = requestAnimationFrame(updateLaser);
+    }
+
+    return () => cancelAnimationFrame(animFrame);
+  }, [modelsReady, videoReady, pointsState, leftAttractor, rightAttractor]);
+
   if (errorMsg) {
     return (
       <div className="flex flex-col items-center justify-center w-full h-full bg-zinc-950 text-white font-sans p-6 z-30">
@@ -129,8 +170,6 @@ export default function App() {
   const showLoading = !modelsReady || !videoReady;
   const showHUD = pointsState.length === 4;
 
-  // Convert points to SVG points string: top-left (0), top-right (1), bottom-right (3), bottom-left (2)
-  // Mirror x coordinates for HUD overlay
   const svgPoints = showHUD
     ? `${(1.0 - pointsState[0].x) * 100},${pointsState[0].y * 100} ` +
       `${(1.0 - pointsState[1].x) * 100},${pointsState[1].y * 100} ` +
@@ -140,10 +179,8 @@ export default function App() {
 
   return (
     <div className="flex items-center justify-center w-full h-full bg-zinc-950 overflow-hidden select-none">
-      {/* Aspect Ratio Sized Layout Container */}
-      <div style={containerStyle} className="relative overflow-hidden bg-black z-0">
+      <div id="layout-container" style={containerStyle} className="relative overflow-hidden bg-black z-0">
         
-        {/* Hidden video element serving frames to canvas and R3F texture */}
         <video
           ref={videoRef}
           playsInline
@@ -151,23 +188,25 @@ export default function App() {
           className="absolute inset-0 w-full h-full object-cover scale-x-[-1] opacity-100 pointer-events-none z-0"
         />
 
-        {/* Three.js canvas layer overlaying effects */}
         {videoReady && videoRef.current && (
           <EffectsCanvas
             videoElement={videoRef.current}
             pointsRef={pointsRef}
             effectMode={effectMode}
             effectIndex={effectIndex}
+            leftAttractor={leftAttractor}
+            rightAttractor={rightAttractor}
+            pinchLActive={pinchLActive}
+            pinchRActive={pinchRActive}
           />
         )}
 
-        {/* 2D Canvas Hand Skeletons Overlay */}
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full pointer-events-none z-20"
         />
 
-        {/* HUD Elements: SVG quadrilateral border */}
+        {/* HUD Elements: SVG quadrilateral border & energy beam */}
         {showHUD && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
             <defs>
@@ -178,7 +217,15 @@ export default function App() {
                   <feMergeNode in="SourceGraphic"/>
                 </feMerge>
               </filter>
+              <filter id="laser-glow">
+                <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
             </defs>
+
             <polygon
               points={svgPoints}
               fill="none"
@@ -187,10 +234,28 @@ export default function App() {
               filter="url(#glow)"
               className="transition-all duration-75"
             />
+
+            <path
+              d={laserPath}
+              fill="none"
+              stroke={effectMode === 'xray' ? '#22d3ee' : '#34d399'}
+              strokeWidth="3.5"
+              strokeDasharray="6, 4"
+              filter="url(#laser-glow)"
+              className="opacity-90"
+            />
+            
+            <path
+              d={laserPath}
+              fill="none"
+              stroke="white"
+              strokeWidth="1.5"
+              className="opacity-100"
+            />
           </svg>
         )}
 
-        {/* HUD Elements: Green glowing marker corner squares */}
+        {/* HUD Elements: glowing marker corner squares */}
         {showHUD && pointsState.map((pt, idx) => (
           <div
             key={idx}
@@ -207,7 +272,6 @@ export default function App() {
           />
         ))}
 
-        {/* Loading Overlay */}
         {showLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 z-30 text-white font-sans">
             <div className="w-12 h-12 border-2 border-t-cyan-500 border-r-cyan-500 border-zinc-800 rounded-full animate-spin mb-6" />
