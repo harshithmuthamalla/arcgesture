@@ -8,6 +8,7 @@ export const EffectShader = {
   `,
   fragmentShader: `
     uniform sampler2D uTexture;
+    uniform sampler2D uDocTexture; // MRI or Blueprint document texture
     uniform float uTime;
     uniform float uMode; // Blends Particle (0.0) -> X-Ray (1.0)
     uniform float uEffectIndex; // Cycle index for particle mode
@@ -22,7 +23,16 @@ export const EffectShader = {
     uniform float uRightPinch;
     uniform float uLeftDepth;
     uniform float uRightDepth;
-    uniform float uBloomStrength; // Dynamic bloom scaling based on Z-depth
+    uniform float uBloomStrength;
+
+    // Document settings uniforms
+    uniform float uUseDoc; // 1.0 if medical/blueprint image is active
+    uniform float uDocZoom;
+    uniform vec2 uDocPan;
+
+    // Shockwave gesture uniforms
+    uniform float uShockwaveTime; // Timer since shockwave trigger (default -1.0)
+    uniform vec2 uShockwaveCenter; // Normalized coordinates of clap center
 
     // Settings uniforms
     uniform float uSpeedMultiplier;
@@ -74,11 +84,25 @@ export const EffectShader = {
       // Mirrored coordinates matching attractors
       vec2 mirroredUv = vec2(1.0 - vUv.x, vUv.y);
 
+      vec2 warpedUv = mirroredUv;
+
+      // ----------------------------------------------------
+      // Combo Gesture: Fast-Spread Shockwave Ripple
+      // ----------------------------------------------------
+      if (uShockwaveTime >= 0.0 && uShockwaveTime < 0.8) {
+        vec2 diff = vUv - uShockwaveCenter;
+        float dist = length(diff);
+        float waveSpeed = 1.2;
+        float radius = uShockwaveTime * waveSpeed;
+        if (dist > radius - 0.08 && dist < radius + 0.08) {
+          float wave = sin((dist - radius) * 45.0) * 0.016 * (1.0 - uShockwaveTime / 0.8);
+          warpedUv += normalize(diff) * wave;
+        }
+      }
+
       // ----------------------------------------------------
       // Pinch Shockwave / Ripples (refracts UV coordinates)
       // ----------------------------------------------------
-      vec2 warpedUv = mirroredUv;
-
       // Left Hand Pinch Ripple
       if (uLeftPinch > 0.5) {
         vec2 dirL = mirroredUv - vec2(1.0 - uLeftAttractor.x, uLeftAttractor.y);
@@ -124,6 +148,21 @@ export const EffectShader = {
 
       warpedUv = clamp(warpedUv, 0.001, 0.999);
 
+      // Base Sobel edge outlines (used by X-Ray and Blueprint modes)
+      float dx = 1.0 / uResolution.x;
+      float dy = 1.0 / uResolution.y;
+      float s00 = dot(texture2D(uTexture, warpedUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s02 = dot(texture2D(uTexture, warpedUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s20 = dot(texture2D(uTexture, warpedUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s22 = dot(texture2D(uTexture, warpedUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s10 = dot(texture2D(uTexture, warpedUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+      float s12 = dot(texture2D(uTexture, warpedUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+      float s01 = dot(texture2D(uTexture, warpedUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s21 = dot(texture2D(uTexture, warpedUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
+      float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
+      float edgeVal = sqrt(sx * sx + sy * sy);
+
       // Base sample
       vec3 originalColor = texture2D(uTexture, warpedUv).rgb;
       float baseLum = dot(originalColor, vec3(0.299, 0.587, 0.114));
@@ -153,14 +192,20 @@ export const EffectShader = {
         gridUv += normalize(dirAttR) * (1.0 - distAttR / 0.25) * 0.035;
       }
 
+      // Twinkling grid of squares (90x90 grid) using warped gridUv
       vec2 gridRes = vec2(90.0, 90.0 * (uResolution.y / uResolution.x));
       vec2 cellPos = fract(gridUv * gridRes);
       vec2 cellIndex = floor(gridUv * gridRes);
       
       float gridVal = 0.0;
       if (cellPos.x > 0.35 && cellPos.x < 0.65 && cellPos.y > 0.35 && cellPos.y < 0.65) {
-        float strobe = sin(speedTime * 15.0 + cellIndex.x * 0.5 + cellIndex.y * 0.3) * 0.5 + 0.5;
-        gridVal = strobe;
+        // Adjust particle size dynamically based on Z-depth (uBloomStrength)
+        float pBoundMin = 0.35 - uBloomStrength * 0.15;
+        float pBoundMax = 0.65 + uBloomStrength * 0.15;
+        if (cellPos.x > pBoundMin && cellPos.x < pBoundMax && cellPos.y > pBoundMin && cellPos.y < pBoundMax) {
+          float strobe = sin(speedTime * 15.0 + cellIndex.x * 0.5 + cellIndex.y * 0.3) * 0.5 + 0.5;
+          gridVal = strobe;
+        }
       }
       
       float phase = cellIndex.x * 0.1 + cellIndex.y * 0.05;
@@ -185,20 +230,22 @@ export const EffectShader = {
       if (uEffectIndex < 0.5) {
         quadColor = particleFinalColor;
       } else if (uEffectIndex < 1.5) {
-        // Burning
-        vec2 burnUv = warpedUv + snoise(warpedUv * 10.0 + speedTime * 2.0) * 0.05;
-        float burnLum = dot(texture2D(uTexture, burnUv).rgb, vec3(0.299, 0.587, 0.114));
-        vec3 col0 = vec3(0.1, 0.0, 0.0);
-        vec3 col1 = vec3(1.0, 0.0, 0.0);
-        vec3 col2 = vec3(1.0, 0.5, 0.0);
-        vec3 col3 = vec3(1.0, 1.0, 0.0);
-        if (burnLum < 0.33) {
-          quadColor = mix(col0, col1, burnLum / 0.33);
-        } else if (burnLum < 0.66) {
-          quadColor = mix(col1, col2, (burnLum - 0.33) / 0.33);
-        } else {
-          quadColor = mix(col2, col3, (burnLum - 0.66) / 0.34);
-        }
+        // Blueprint Mode (Blueprint drafting lines & technical grid - replaces Burning)
+        // 1. Cyan base grid
+        vec3 blueprintBg = vec3(0.01, 0.12, 0.35);
+        vec2 bRes = vec2(30.0, 30.0 * (uResolution.y / uResolution.x));
+        vec2 bGridPos = step(vec2(0.96), fract(warpedUv * bRes));
+        float blueGridVal = max(bGridPos.x, bGridPos.y);
+        
+        // 2. Concentric circular schematics drawing
+        float distToCenter = distance(warpedUv, vec2(0.5));
+        float bRings = step(0.97, sin(distToCenter * 48.0)) * 0.2;
+        
+        // 3. Technical white outline drawing from Sobel edges
+        vec3 blueprintGridLines = mix(vec3(0.1, 0.35, 0.7) * blueGridVal, vec3(0.12, 0.45, 0.8) * (blueGridVal + bRings), 0.6);
+        vec3 blueprintSkeletonLines = vec3(0.3, 0.85, 1.0) * edgeVal * 2.2 * uNeonMultiplier;
+        
+        quadColor = blueprintBg + blueprintGridLines + blueprintSkeletonLines;
       } else if (uEffectIndex < 2.5) {
         // Glow Silhouette
         float contrastLum = pow(baseLum, 1.2) * 1.5;
@@ -230,28 +277,29 @@ export const EffectShader = {
         // Glitch
         quadColor = vec3(
           texture2D(uTexture, clamp(warpedUv + vec2(offsetR, 0.0), 0.0, 1.0)).r,
-          texture2D(uTexture, warpedUv).g,
+          texture2D(uTexture, vUv).g,
           texture2D(uTexture, clamp(warpedUv + vec2(offsetB, 0.0), 0.0, 1.0)).b
         );
         quadColor -= sin(warpedUv.y * 800.0 + speedTime * 10.0) * 0.05;
       } else {
         // Neon Edges
-        float dx = 1.0 / uResolution.x;
-        float dy = 1.0 / uResolution.y;
-        float s00 = dot(texture2D(uTexture, warpedUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s02 = dot(texture2D(uTexture, warpedUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s20 = dot(texture2D(uTexture, warpedUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s22 = dot(texture2D(uTexture, warpedUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s10 = dot(texture2D(uTexture, warpedUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-        float s12 = dot(texture2D(uTexture, warpedUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-        float s01 = dot(texture2D(uTexture, warpedUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s21 = dot(texture2D(uTexture, warpedUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
-        float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
-        float edgeVal = sqrt(sx * sx + sy * sy);
-        
         vec3 neonColor = vec3(0.1, 1.0, 0.8) * edgeVal * 2.5 * (1.0 + uBloomStrength * 1.6) * uNeonMultiplier;
         quadColor = mix(originalColor * 0.3, neonColor, 0.7);
+      }
+
+      // ----------------------------------------------------
+      // Option E: Practical Document Viewer (MRI / Blueprint overlay)
+      // ----------------------------------------------------
+      if (uUseDoc > 0.5) {
+        // Zoom and Pan document mapping coordinates
+        vec2 docUv = (warpedUv - 0.5) * uDocZoom + 0.5 + uDocPan;
+        docUv = clamp(docUv, 0.001, 0.999);
+        
+        vec3 docColor = texture2D(uDocTexture, docUv).rgb;
+        
+        // Overlay cyan outlines of operator's hands over the medical document
+        vec3 docOutlines = vec3(0.1, 0.9, 1.0) * edgeVal * 1.5;
+        quadColor = docColor + docOutlines;
       }
 
       // ----------------------------------------------------
@@ -263,20 +311,7 @@ export const EffectShader = {
       vec3 xrayVolume = mix(baseBlue, darkBlue, baseLum);
 
       // 2. Cyan Edges
-      float dx = 1.0 / uResolution.x;
-      float dy = 1.0 / uResolution.y;
-      float s00 = dot(texture2D(uTexture, warpedUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s02 = dot(texture2D(uTexture, warpedUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s20 = dot(texture2D(uTexture, warpedUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s22 = dot(texture2D(uTexture, warpedUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s10 = dot(texture2D(uTexture, warpedUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-      float s12 = dot(texture2D(uTexture, warpedUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-      float s01 = dot(texture2D(uTexture, warpedUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s21 = dot(texture2D(uTexture, warpedUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
-      float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
-      float edgeXray = sqrt(sx * sx + sy * sy);
-      vec3 cyanEdges = vec3(0.0, 0.9, 1.0) * edgeXray * 2.0 * (1.0 + uBloomStrength * 1.5) * uNeonMultiplier;
+      vec3 cyanEdges = vec3(0.0, 0.9, 1.0) * edgeVal * 2.0 * (1.0 + uBloomStrength * 1.5) * uNeonMultiplier;
 
       // 3. Film Grain
       float grainNoise = hash(warpedUv + speedTime * 100.0) * 0.1 * uGrainMultiplier - 0.05 * uGrainMultiplier;

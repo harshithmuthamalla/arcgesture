@@ -28,6 +28,10 @@ export const useHandTracker = (
   const [pinchRActive, setPinchRActive] = useState(false);
   const [isThumbsUpL, setIsThumbsUpL] = useState(false);
   const [isThumbsUpR, setIsThumbsUpR] = useState(false);
+  const [isFistL, setIsFistL] = useState(false);
+  const [isFistR, setIsFistR] = useState(false);
+  const [isFieldLocked, setIsFieldLocked] = useState(false);
+  const [clapDist, setClapDist] = useState(1.0);
 
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const pointsRef = useRef<Point[]>([]);
@@ -145,6 +149,21 @@ export const useHandTracker = (
     return thumbExtended && foldedCount >= 3;
   };
 
+  // Fist classifier (checks if index, middle, ring, pinky are close to wrist)
+  const checkFist = (hand: any): boolean => {
+    const wrist = hand[0];
+    const foldedCount = [8, 12, 16, 20].filter((tipIdx) => {
+      const tip = hand[tipIdx];
+      const mcp = hand[tipIdx - 3];
+      
+      const distTipWrist = Math.sqrt(Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2));
+      const distMcpWrist = Math.sqrt(Math.pow(mcp.x - wrist.x, 2) + Math.pow(mcp.y - wrist.y, 2));
+      
+      return distTipWrist < distMcpWrist * 1.15;
+    }).length;
+    return foldedCount === 4;
+  };
+
   const processFrame = () => {
     if (!landmarkerRef.current || !videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
@@ -186,6 +205,15 @@ export const useHandTracker = (
           setIsThumbsUpL(checkThumbsUp(handL));
           setIsThumbsUpR(checkThumbsUp(handR));
 
+          const fistL = checkFist(handL);
+          const fistR = checkFist(handR);
+          setIsFistL(fistL);
+          setIsFistR(fistR);
+
+          // Lock visual coordinates if both hands are fists
+          const lockActive = fistL && fistR;
+          setIsFieldLocked(lockActive);
+
           const dL = Math.sqrt(Math.pow(handL[0].x - handL[9].x, 2) + Math.pow(handL[0].y - handL[9].y, 2));
           const dR = Math.sqrt(Math.pow(handR[0].x - handR[9].x, 2) + Math.pow(handR[0].y - handR[9].y, 2));
           setLeftDepth(Math.max(0.0, Math.min(1.0, (dL - 0.08) / 0.16)));
@@ -218,40 +246,42 @@ export const useHandTracker = (
           const activeMode = (pinchL && pinchR) ? 'xray' : 'particle';
           setEffectMode(activeMode);
 
-          // 1. Calculate target points
-          let targetPoints: Point[] = [];
+          // 1. Calculate target points (only update if field is NOT locked)
+          if (!lockActive) {
+            let targetPoints: Point[] = [];
 
-          if (activeMode === 'xray') {
-            const pL_idx = handL[8];
-            const pL_thb = handL[4];
-            const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
+            if (activeMode === 'xray') {
+              const pL_idx = handL[8];
+              const pL_thb = handL[4];
+              const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
 
-            const pR_idx = handR[8];
-            const pR_thb = handR[4];
-            const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
+              const pR_idx = handR[8];
+              const pR_thb = handR[4];
+              const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
 
-            targetPoints = [
-              { x: cL.x, y: cL.y - 0.075 },
-              { x: cR.x, y: cR.y - 0.075 },
-              { x: cL.x, y: cL.y + 0.075 },
-              { x: cR.x, y: cR.y + 0.075 }
-            ];
-          } else {
-            targetPoints = [
-              handL[8],
-              handR[8],
-              handL[4],
-              handR[4]
-            ];
-          }
+              targetPoints = [
+                { x: cL.x, y: cL.y - 0.075 },
+                { x: cR.x, y: cR.y - 0.075 },
+                { x: cL.x, y: cL.y + 0.075 },
+                { x: cR.x, y: cR.y + 0.075 }
+              ];
+            } else {
+              targetPoints = [
+                handL[8],
+                handR[8],
+                handL[4],
+                handR[4]
+              ];
+            }
 
-          if (pointsRef.current.length !== 4) {
-            pointsRef.current = targetPoints;
-          } else {
-            pointsRef.current = pointsRef.current.map((prev, idx) => ({
-              x: prev.x + alpha * (targetPoints[idx].x - prev.x),
-              y: prev.y + alpha * (targetPoints[idx].y - prev.y)
-            }));
+            if (pointsRef.current.length !== 4) {
+              pointsRef.current = targetPoints;
+            } else {
+              pointsRef.current = pointsRef.current.map((prev, idx) => ({
+                x: prev.x + alpha * (targetPoints[idx].x - prev.x),
+                y: prev.y + alpha * (targetPoints[idx].y - prev.y)
+              }));
+            }
           }
           setPointsState([...pointsRef.current]);
 
@@ -260,12 +290,13 @@ export const useHandTracker = (
           const pR_mcp = handR[9];
           const dx_mcp = pR_mcp.x - pL_mcp.x;
           const dy_mcp = pR_mcp.y - pL_mcp.y;
-          const clapDist = Math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp);
+          const currentClapDist = Math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp);
           
-          lastClapDistRef.current = clapDist; // Record distance
+          setClapDist(currentClapDist);
+          lastClapDistRef.current = currentClapDist; // Record distance
 
-          // Clapping distance threshold increased to 0.20
-          if (clapDist < 0.20 && activeMode !== 'xray') {
+          // Clapping distance threshold 0.20
+          if (currentClapDist < 0.20 && activeMode !== 'xray') {
             const nowClap = performance.now();
             if (nowClap - lastClapTimeRef.current > 1000) {
               lastClapTimeRef.current = nowClap;
@@ -275,7 +306,11 @@ export const useHandTracker = (
           }
         } else {
           // If hand count drops below 2:
-          // Transition-based clap detection: if hands were close in the last frame they were both tracked
+          setIsFistL(false);
+          setIsFistR(false);
+          setIsFieldLocked(false);
+
+          // Transition-based clap detection
           if (lastClapDistRef.current < 0.28) {
             const nowClap = performance.now();
             if (nowClap - lastClapTimeRef.current > 1000) {
@@ -298,6 +333,7 @@ export const useHandTracker = (
             setRightVelocity({ x: 0, y: 0 });
             setLeftDepth(0);
             setRightDepth(0);
+            setClapDist(1.0);
           } else {
             setPinchLActive(false);
             setPinchRActive(false);
@@ -309,6 +345,10 @@ export const useHandTracker = (
         }
       } else {
         // No hands detected at all: check transition clap
+        setIsFistL(false);
+        setIsFistR(false);
+        setIsFieldLocked(false);
+
         if (lastClapDistRef.current < 0.28) {
           const nowClap = performance.now();
           if (nowClap - lastClapTimeRef.current > 1000) {
@@ -331,6 +371,7 @@ export const useHandTracker = (
           setRightVelocity({ x: 0, y: 0 });
           setLeftDepth(0);
           setRightDepth(0);
+          setClapDist(1.0);
         } else {
           setPinchLActive(false);
           setPinchRActive(false);
@@ -359,6 +400,10 @@ export const useHandTracker = (
     pinchRActive,
     isThumbsUpL,
     isThumbsUpR,
+    isFistL,
+    isFistR,
+    isFieldLocked,
+    clapDist,
     processFrame,
     setErrorMsg
   };
