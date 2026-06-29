@@ -12,9 +12,16 @@ export const EffectShader = {
     uniform float uMode; // Blends Particle (0.0) -> X-Ray (1.0)
     uniform float uEffectIndex; // Cycle index for particle mode
     uniform vec2 uResolution;
+    
+    // Attractor uniforms
+    uniform vec2 uLeftAttractor;  // Normalized Left Index Tip
+    uniform vec2 uRightAttractor; // Normalized Right Index Tip
+    uniform float uLeftPinch;     // Left Pinch strength (1.0 = pinching)
+    uniform float uRightPinch;    // Right Pinch strength
+
     varying vec2 vUv;
 
-    // 2D Simplex Noise generator
+    // 2D Simplex Noise
     vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
 
     float snoise(vec2 v){
@@ -46,14 +53,38 @@ export const EffectShader = {
       return 130.0 * dot(m, vecValues * norm);
     }
 
-    // Hash function for grain noise
     float hash(vec2 p) {
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
     }
 
     void main() {
-      // Input texture UV coordinates (already screen-mapped in EffectsCanvas)
-      vec3 originalColor = texture2D(uTexture, vUv).rgb;
+      // ----------------------------------------------------
+      // Pinch Shockwave / Ripples (refracts UV coordinates)
+      // ----------------------------------------------------
+      vec2 warpedUv = vUv;
+
+      // Left Hand Pinch Ripple
+      if (uLeftPinch > 0.5) {
+        vec2 dirL = vUv - vec2(1.0 - uLeftAttractor.x, uLeftAttractor.y);
+        float distL = length(dirL);
+        if (distL < 0.3) {
+          float wave = sin(distL * 60.0 - uTime * 18.0) * 0.008 * (1.0 - distL / 0.3);
+          warpedUv += normalize(dirL) * wave;
+        }
+      }
+
+      // Right Hand Pinch Ripple
+      if (uRightPinch > 0.5) {
+        vec2 dirR = vUv - vec2(1.0 - uRightAttractor.x, uRightAttractor.y);
+        float distR = length(dirR);
+        if (distR < 0.3) {
+          float wave = sin(distR * 60.0 - uTime * 18.0) * 0.008 * (1.0 - distR / 0.3);
+          warpedUv += normalize(dirR) * wave;
+        }
+      }
+
+      // Base sample
+      vec3 originalColor = texture2D(uTexture, warpedUv).rgb;
       float baseLum = dot(originalColor, vec3(0.299, 0.587, 0.114));
 
       // ----------------------------------------------------
@@ -67,10 +98,28 @@ export const EffectShader = {
       float contours = smoothstep(0.4, 0.5, bands) - smoothstep(0.5, 0.6, bands);
       vec3 contourColor = vec3(0.05, 0.3, 0.9) * contours * 1.5;
 
-      // 2. Twinkling grid of squares (90x90 grid)
+      // 2. Interactive Magnetic Grid Warp
+      // Displace grid coordinate system near attractors
+      vec2 gridUv = warpedUv;
+      
+      vec2 attL_Uv = vec2(1.0 - uLeftAttractor.x, uLeftAttractor.y);
+      vec2 dirAttL = gridUv - attL_Uv;
+      float distAttL = length(dirAttL);
+      if (distAttL < 0.25) {
+        gridUv += normalize(dirAttL) * (1.0 - distAttL / 0.25) * 0.035;
+      }
+
+      vec2 attR_Uv = vec2(1.0 - uRightAttractor.x, uRightAttractor.y);
+      vec2 dirAttR = gridUv - attR_Uv;
+      float distAttR = length(dirAttR);
+      if (distAttR < 0.25) {
+        gridUv += normalize(dirAttR) * (1.0 - distAttR / 0.25) * 0.035;
+      }
+
+      // 3. Twinkling grid of squares (90x90 grid) using warped gridUv
       vec2 gridRes = vec2(90.0, 90.0 * (uResolution.y / uResolution.x));
-      vec2 cellPos = fract(vUv * gridRes);
-      vec2 cellIndex = floor(vUv * gridRes);
+      vec2 cellPos = fract(gridUv * gridRes);
+      vec2 cellIndex = floor(gridUv * gridRes);
       
       float gridVal = 0.0;
       if (cellPos.x > 0.35 && cellPos.x < 0.65 && cellPos.y > 0.35 && cellPos.y < 0.65) {
@@ -78,7 +127,7 @@ export const EffectShader = {
         gridVal = strobe;
       }
       
-      // 3. Color Cycling (Magenta -> Yellow -> White at 15Hz)
+      // 4. Color Cycling (Magenta -> Yellow -> White at 15Hz)
       float phase = cellIndex.x * 0.1 + cellIndex.y * 0.05;
       float cycle = fract(uTime * 15.0 / 3.0 + phase) * 3.0;
       vec3 particleColor;
@@ -91,20 +140,20 @@ export const EffectShader = {
       }
       vec3 gridOutput = particleColor * gridVal;
 
-      // 4. Subject Glow
+      // 5. Subject Glow
       vec3 subjectGlow = vec3(0.1, 0.3, 0.9) * smoothstep(0.2, 0.8, baseLum) * 0.6;
 
       vec3 particleFinalColor = originalColor * 0.3 + contourColor + gridOutput + subjectGlow;
 
-      // Glitch helpers (Pre-calculated for use across modes)
-      float offsetR = snoise(vec2(uTime * 15.0, vUv.y * 30.0)) * 0.012;
-      float offsetB = -snoise(vec2(uTime * 10.0, vUv.y * 20.0)) * 0.012;
+      // Glitch helpers
+      float offsetR = snoise(vec2(uTime * 15.0, warpedUv.y * 30.0)) * 0.012;
+      float offsetB = -snoise(vec2(uTime * 10.0, warpedUv.y * 20.0)) * 0.012;
 
       if (uEffectIndex < 0.5) {
         quadColor = particleFinalColor;
       } else if (uEffectIndex < 1.5) {
-        // Burning Effect
-        vec2 burnUv = vUv + snoise(vUv * 10.0 + uTime * 2.0) * 0.05;
+        // Burning
+        vec2 burnUv = warpedUv + snoise(warpedUv * 10.0 + uTime * 2.0) * 0.05;
         float burnLum = dot(texture2D(uTexture, burnUv).rgb, vec3(0.299, 0.587, 0.114));
         vec3 col0 = vec3(0.1, 0.0, 0.0);
         vec3 col1 = vec3(1.0, 0.0, 0.0);
@@ -120,7 +169,7 @@ export const EffectShader = {
       } else if (uEffectIndex < 2.5) {
         // Glow Silhouette
         float contrastLum = pow(baseLum, 1.2) * 1.5;
-        float edgeNoise = snoise(vUv * 200.0 + uTime * 0.5) * 0.15;
+        float edgeNoise = snoise(warpedUv * 200.0 + uTime * 0.5) * 0.15;
         float core = smoothstep(0.5 + edgeNoise, 0.7 + edgeNoise, contrastLum);
         float halo = smoothstep(0.2 + edgeNoise, 0.6 + edgeNoise, contrastLum);
         quadColor = mix(mix(vec3(0.0), vec3(0.4, 0.9, 1.0), halo), vec3(1.0), core);
@@ -139,30 +188,30 @@ export const EffectShader = {
       } else if (uEffectIndex < 4.5) {
         // Pixelated
         vec2 dGrid = vec2(80.0, 80.0 * (uResolution.y / uResolution.x));
-        vec2 blockUv = floor(vUv * dGrid) / dGrid;
+        vec2 blockUv = floor(warpedUv * dGrid) / dGrid;
         float dPixelLum = dot(texture2D(uTexture, blockUv).rgb, vec3(0.299, 0.587, 0.114));
-        float cellDist = distance(fract(vUv * dGrid), vec2(0.5));
+        float cellDist = distance(fract(warpedUv * dGrid), vec2(0.5));
         quadColor = (cellDist < 0.35) ? (dPixelLum > 0.25 ? vec3(0.0, 1.0, 0.0) : vec3(0.0)) : vec3(0.0, 0.1, 0.0);
       } else if (uEffectIndex < 5.5) {
         // Glitch
         quadColor = vec3(
-          texture2D(uTexture, clamp(vUv + vec2(offsetR, 0.0), 0.0, 1.0)).r,
+          texture2D(uTexture, clamp(warpedUv + vec2(offsetR, 0.0), 0.0, 1.0)).r,
           texture2D(uTexture, vUv).g,
-          texture2D(uTexture, clamp(vUv + vec2(offsetB, 0.0), 0.0, 1.0)).b
+          texture2D(uTexture, clamp(warpedUv + vec2(offsetB, 0.0), 0.0, 1.0)).b
         );
-        quadColor -= sin(vUv.y * 800.0 + uTime * 10.0) * 0.05;
+        quadColor -= sin(warpedUv.y * 800.0 + uTime * 10.0) * 0.05;
       } else {
         // Neon Edges
         float dx = 1.0 / uResolution.x;
         float dy = 1.0 / uResolution.y;
-        float s00 = dot(texture2D(uTexture, vUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s02 = dot(texture2D(uTexture, vUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s20 = dot(texture2D(uTexture, vUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s22 = dot(texture2D(uTexture, vUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s10 = dot(texture2D(uTexture, vUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-        float s12 = dot(texture2D(uTexture, vUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-        float s01 = dot(texture2D(uTexture, vUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-        float s21 = dot(texture2D(uTexture, vUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s00 = dot(texture2D(uTexture, warpedUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s02 = dot(texture2D(uTexture, warpedUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s20 = dot(texture2D(uTexture, warpedUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s22 = dot(texture2D(uTexture, warpedUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s10 = dot(texture2D(uTexture, warpedUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+        float s12 = dot(texture2D(uTexture, warpedUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+        float s01 = dot(texture2D(uTexture, warpedUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+        float s21 = dot(texture2D(uTexture, warpedUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
         float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
         float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
         float edgeVal = sqrt(sx * sx + sy * sy);
@@ -177,27 +226,27 @@ export const EffectShader = {
       vec3 darkBlue = vec3(0.02, 0.05, 0.2);
       vec3 xrayVolume = mix(baseBlue, darkBlue, baseLum);
 
-      // 2. Cyan Edges (Sobel edge detection)
+      // 2. Cyan Edges
       float dx = 1.0 / uResolution.x;
       float dy = 1.0 / uResolution.y;
-      float s00 = dot(texture2D(uTexture, vUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s02 = dot(texture2D(uTexture, vUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s20 = dot(texture2D(uTexture, vUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s22 = dot(texture2D(uTexture, vUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s10 = dot(texture2D(uTexture, vUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-      float s12 = dot(texture2D(uTexture, vUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-      float s01 = dot(texture2D(uTexture, vUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
-      float s21 = dot(texture2D(uTexture, vUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s00 = dot(texture2D(uTexture, warpedUv + vec2(-dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s02 = dot(texture2D(uTexture, warpedUv + vec2(dx, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s20 = dot(texture2D(uTexture, warpedUv + vec2(-dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s22 = dot(texture2D(uTexture, warpedUv + vec2(dx, dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s10 = dot(texture2D(uTexture, warpedUv + vec2(-dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+      float s12 = dot(texture2D(uTexture, warpedUv + vec2(dx, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+      float s01 = dot(texture2D(uTexture, warpedUv + vec2(0.0, -dy)).rgb, vec3(0.299, 0.587, 0.114));
+      float s21 = dot(texture2D(uTexture, warpedUv + vec2(0.0, dy)).rgb, vec3(0.299, 0.587, 0.114));
       float sx = (s02 + 2.0 * s12 + s22) - (s00 + 2.0 * s10 + s20);
       float sy = (s20 + 2.0 * s21 + s22) - (s00 + 2.0 * s01 + s02);
       float edgeXray = sqrt(sx * sx + sy * sy);
       vec3 cyanEdges = vec3(0.0, 0.9, 1.0) * edgeXray * 2.0;
 
       // 3. Film Grain
-      float grainNoise = hash(vUv + uTime * 100.0) * 0.1 - 0.05;
+      float grainNoise = hash(warpedUv + uTime * 100.0) * 0.1 - 0.05;
 
       // 4. Scanlines
-      float scanline = sin(vUv.y * uResolution.y * 2.0) * 0.05;
+      float scanline = sin(warpedUv.y * uResolution.y * 2.0) * 0.05;
 
       vec3 xrayFinalColor = clamp(xrayVolume + cyanEdges + grainNoise - scanline, 0.0, 1.0);
 
