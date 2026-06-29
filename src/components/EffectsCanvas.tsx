@@ -18,6 +18,11 @@ interface XRayWindowProps {
   pinchLActive: boolean;
   pinchRActive: boolean;
   bloomStrength: number;
+  
+  // Settings values from App HUD
+  speedMultiplier: number;
+  grainMultiplier: number;
+  neonMultiplier: number;
 }
 
 const XRayWindow: React.FC<XRayWindowProps> = ({
@@ -33,7 +38,10 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
   rightDepth,
   pinchLActive,
   pinchRActive,
-  bloomStrength
+  bloomStrength,
+  speedMultiplier,
+  grainMultiplier,
+  neonMultiplier
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
@@ -81,6 +89,11 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
     mat.uniforms.uLeftDepth.value = leftDepth;
     mat.uniforms.uRightDepth.value = rightDepth;
     mat.uniforms.uBloomStrength.value = bloomStrength;
+
+    // Pass settings multipliers
+    mat.uniforms.uSpeedMultiplier.value = speedMultiplier;
+    mat.uniforms.uGrainMultiplier.value = grainMultiplier;
+    mat.uniforms.uNeonMultiplier.value = neonMultiplier;
 
     const corners = pointsRef.current;
     if (corners.length === 4) {
@@ -139,7 +152,10 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
     uRightPinch: { value: 0.0 },
     uLeftDepth: { value: 0.0 },
     uRightDepth: { value: 0.0 },
-    uBloomStrength: { value: 0.0 }
+    uBloomStrength: { value: 0.0 },
+    uSpeedMultiplier: { value: 1.0 },
+    uGrainMultiplier: { value: 1.0 },
+    uNeonMultiplier: { value: 1.0 }
   });
 
   const geometryRef = useRef<THREE.PlaneGeometry | null>(null);
@@ -171,7 +187,6 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
   );
 };
 
-// Full-Screen Background Video Plane Component
 interface BackgroundPlaneProps {
   video: HTMLVideoElement;
 }
@@ -231,6 +246,9 @@ interface EffectsCanvasProps {
   pinchLActive: boolean;
   pinchRActive: boolean;
   bloomStrength: number;
+  speedMultiplier: number;
+  grainMultiplier: number;
+  neonMultiplier: number;
 }
 
 export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
@@ -246,13 +264,17 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
   rightDepth,
   pinchLActive,
   pinchRActive,
-  bloomStrength
+  bloomStrength,
+  speedMultiplier,
+  grainMultiplier,
+  neonMultiplier
 }) => {
   if (!videoElement) return null;
 
   return (
     <div className="absolute inset-0 w-full h-full pointer-events-none z-10">
       <Canvas
+        id="three-canvas"
         camera={{ position: [0, 0, 1] }}
         gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true, premultipliedAlpha: false }}
         style={{ width: '100%', height: '100%', background: 'transparent' }}
@@ -272,6 +294,9 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
           pinchLActive={pinchLActive}
           pinchRActive={pinchRActive}
           bloomStrength={bloomStrength}
+          speedMultiplier={speedMultiplier}
+          grainMultiplier={grainMultiplier}
+          neonMultiplier={neonMultiplier}
         />
       </Canvas>
     </div>

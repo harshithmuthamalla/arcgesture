@@ -17,15 +17,26 @@ export const useHandTracker = (
   const [effectMode, setEffectMode] = useState<'particle' | 'xray'>('particle');
   const [pointsState, setPointsState] = useState<Point[]>([]);
   
-  // Interactive coordinates states
+  // Interactive coordinates and gestures states
   const [leftAttractor, setLeftAttractor] = useState<Point>({ x: 0.5, y: 0.5 });
   const [rightAttractor, setRightAttractor] = useState<Point>({ x: 0.5, y: 0.5 });
+  const [leftVelocity, setLeftVelocity] = useState<Point>({ x: 0, y: 0 });
+  const [rightVelocity, setRightVelocity] = useState<Point>({ x: 0, y: 0 });
+  const [leftDepth, setLeftDepth] = useState(0.0);
+  const [rightDepth, setRightDepth] = useState(0.0);
   const [pinchLActive, setPinchLActive] = useState(false);
   const [pinchRActive, setPinchRActive] = useState(false);
+  const [isThumbsUpL, setIsThumbsUpL] = useState(false);
+  const [isThumbsUpR, setIsThumbsUpR] = useState(false);
 
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const pointsRef = useRef<Point[]>([]);
   const lastClapTimeRef = useRef<number>(0);
+  
+  const prevLeftRef = useRef<Point>({ x: 0.5, y: 0.5 });
+  const prevRightRef = useRef<Point>({ x: 0.5, y: 0.5 });
+  const lastTimeRef = useRef<number>(0);
+
   const alpha = 0.25;
 
   useEffect(() => {
@@ -108,6 +119,26 @@ export const useHandTracker = (
     return Math.sqrt(dx * dx + dy * dy) < 0.20;
   };
 
+  const checkThumbsUp = (hand: any): boolean => {
+    const wrist = hand[0];
+    const thumbTip = hand[4];
+    const thumbIP = hand[3];
+
+    const thumbExtended = thumbTip.y < thumbIP.y - 0.02;
+
+    const foldedCount = [8, 12, 16, 20].filter((tipIdx) => {
+      const tip = hand[tipIdx];
+      const mcp = hand[tipIdx - 3];
+      
+      const distTipWrist = Math.sqrt(Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2));
+      const distMcpWrist = Math.sqrt(Math.pow(mcp.x - wrist.x, 2) + Math.pow(mcp.y - wrist.y, 2));
+      
+      return distTipWrist < distMcpWrist * 1.3;
+    }).length;
+
+    return thumbExtended && foldedCount >= 3;
+  };
+
   const processFrame = () => {
     if (!landmarkerRef.current || !videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
@@ -139,10 +170,37 @@ export const useHandTracker = (
           setPinchLActive(pinchL);
           setPinchRActive(pinchR);
 
-          // Left index tip (landmark 8)
+          setIsThumbsUpL(checkThumbsUp(handL));
+          setIsThumbsUpR(checkThumbsUp(handR));
+
+          const dL = Math.sqrt(Math.pow(handL[0].x - handL[9].x, 2) + Math.pow(handL[0].y - handL[9].y, 2));
+          const dR = Math.sqrt(Math.pow(handR[0].x - handR[9].x, 2) + Math.pow(handR[0].y - handR[9].y, 2));
+          setLeftDepth(Math.max(0.0, Math.min(1.0, (dL - 0.08) / 0.16)));
+          setRightDepth(Math.max(0.0, Math.min(1.0, (dR - 0.08) / 0.16)));
+
           setLeftAttractor({ x: handL[8].x, y: handL[8].y });
-          // Right index tip (landmark 8)
           setRightAttractor({ x: handR[8].x, y: handR[8].y });
+
+          const now = performance.now();
+          const dT = Math.max(1.0, now - lastTimeRef.current) / 1000;
+          lastTimeRef.current = now;
+
+          const vxL = (handL[8].x - prevLeftRef.current.x) / dT;
+          const vyL = (handL[8].y - prevLeftRef.current.y) / dT;
+          const vxR = (handR[8].x - prevRightRef.current.x) / dT;
+          const vyR = (handR[8].y - prevRightRef.current.y) / dT;
+
+          setLeftVelocity((prev) => ({
+            x: prev.x + 0.3 * (vxL - prev.x),
+            y: prev.y + 0.3 * (vyL - prev.y)
+          }));
+          setRightVelocity((prev) => ({
+            x: prev.x + 0.3 * (vxR - prev.x),
+            y: prev.y + 0.3 * (vyR - prev.y)
+          }));
+
+          prevLeftRef.current = { x: handL[8].x, y: handL[8].y };
+          prevRightRef.current = { x: handR[8].x, y: handR[8].y };
 
           const activeMode = (pinchL && pinchR) ? 'xray' : 'particle';
           setEffectMode(activeMode);
@@ -154,9 +212,9 @@ export const useHandTracker = (
           const clapDist = Math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp);
 
           if (clapDist < 0.1 && activeMode !== 'xray') {
-            const now = performance.now();
-            if (now - lastClapTimeRef.current > 1000) {
-              lastClapTimeRef.current = now;
+            const nowClap = performance.now();
+            if (nowClap - lastClapTimeRef.current > 1000) {
+              lastClapTimeRef.current = nowClap;
               playSwitchSound();
               onEffectSwitch();
             }
@@ -204,12 +262,24 @@ export const useHandTracker = (
           setPointsState([]);
           setPinchLActive(false);
           setPinchRActive(false);
+          setIsThumbsUpL(false);
+          setIsThumbsUpR(false);
+          setLeftVelocity({ x: 0, y: 0 });
+          setRightVelocity({ x: 0, y: 0 });
+          setLeftDepth(0);
+          setRightDepth(0);
         }
       } else {
         pointsRef.current = [];
         setPointsState([]);
         setPinchLActive(false);
         setPinchRActive(false);
+        setIsThumbsUpL(false);
+        setIsThumbsUpR(false);
+        setLeftVelocity({ x: 0, y: 0 });
+        setRightVelocity({ x: 0, y: 0 });
+        setLeftDepth(0);
+        setRightDepth(0);
       }
     }
   };
@@ -222,8 +292,14 @@ export const useHandTracker = (
     pointsRef,
     leftAttractor,
     rightAttractor,
+    leftVelocity,
+    rightVelocity,
+    leftDepth,
+    rightDepth,
     pinchLActive,
     pinchRActive,
+    isThumbsUpL,
+    isThumbsUpR,
     processFrame,
     setErrorMsg
   };
