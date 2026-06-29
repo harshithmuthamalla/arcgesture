@@ -32,6 +32,7 @@ export const useHandTracker = (
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const pointsRef = useRef<Point[]>([]);
   const lastClapTimeRef = useRef<number>(0);
+  const lastTwoHandsTimeRef = useRef<number>(0); // Tracking loss grace period timer
   
   const prevLeftRef = useRef<Point>({ x: 0.5, y: 0.5 });
   const prevRightRef = useRef<Point>({ x: 0.5, y: 0.5 });
@@ -54,6 +55,9 @@ export const useHandTracker = (
           },
           runningMode: 'VIDEO',
           numHands: 2,
+          minHandDetectionConfidence: 0.4,
+          minHandPresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4
         });
 
         if (active) {
@@ -79,19 +83,20 @@ export const useHandTracker = (
 
   const drawSkeleton = (ctx: CanvasRenderingContext2D, landmarks: any[]) => {
     const connections = [
-      [0, 1], [1, 2], [2, 3], [3, 4],
-      [0, 5], [5, 6], [6, 7], [7, 8],
-      [9, 10], [10, 11], [11, 12],
-      [0, 17], [17, 18], [18, 19], [19, 20],
-      [5, 9], [9, 13], [13, 17], [0, 13],
-      [13, 14], [14, 15], [15, 16],
+      [0, 1], [1, 2], [2, 3], [3, 4], // Thumb
+      [0, 5], [5, 6], [6, 7], [7, 8], // Index
+      [5, 9], [9, 10], [10, 11], [11, 12], // Middle
+      [9, 13], [13, 14], [14, 15], [15, 16], // Ring
+      [13, 17], [17, 18], [18, 19], [19, 20], // Pinky
+      [0, 17] // Palm base
     ];
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.shadowBlur = 3;
-    ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    // Neon Cyberpunk Cyan styling
+    ctx.lineWidth = 2.5;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = '#22d3ee';
+    ctx.strokeStyle = '#22d3ee';
+    ctx.fillStyle = '#ffffff';
 
     landmarks.forEach((hand) => {
       connections.forEach(([i, j]) => {
@@ -103,14 +108,14 @@ export const useHandTracker = (
         }
       });
 
+      // Sharp white knuckle joint dots
+      ctx.shadowBlur = 0;
       hand.forEach((lm: any) => {
         ctx.beginPath();
-        ctx.arc((1 - lm.x) * ctx.canvas.width, lm.y * ctx.canvas.height, 1.5, 0, 2 * Math.PI);
+        ctx.arc((1 - lm.x) * ctx.canvas.width, lm.y * ctx.canvas.height, 2.5, 0, 2 * Math.PI);
         ctx.fill();
       });
     });
-
-    ctx.shadowBlur = 0;
   };
 
   const isPinching = (hand: any) => {
@@ -146,9 +151,14 @@ export const useHandTracker = (
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
-      canvas.width = video.clientWidth;
-      canvas.height = video.clientHeight;
+    // Fix Canvas resolution: match visible container client dimensions instead of hidden video
+    const container = document.getElementById('layout-container');
+    const width = container ? container.clientWidth : video.videoWidth || 1280;
+    const height = container ? container.clientHeight : video.videoHeight || 720;
+
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -160,6 +170,8 @@ export const useHandTracker = (
         drawSkeleton(ctx, results.landmarks);
 
         if (results.landmarks.length === 2) {
+          lastTwoHandsTimeRef.current = performance.now(); // update grace period timer
+
           const sortedHands = [...results.landmarks].sort((a, b) => (1 - b[0].x) - (1 - a[0].x));
           const handL = sortedHands[0];
           const handR = sortedHands[1];
@@ -211,7 +223,8 @@ export const useHandTracker = (
           const dy_mcp = pR_mcp.y - pL_mcp.y;
           const clapDist = Math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp);
 
-          if (clapDist < 0.1 && activeMode !== 'xray') {
+          // Clapping distance threshold increased to 0.18 to prevent model occlusion failure
+          if (clapDist < 0.18 && activeMode !== 'xray') {
             const nowClap = performance.now();
             if (nowClap - lastClapTimeRef.current > 1000) {
               lastClapTimeRef.current = nowClap;
@@ -258,6 +271,33 @@ export const useHandTracker = (
             setPointsState([...pointsRef.current]);
           }
         } else {
+          // If we detect 1 hand, check grace period timer to prevent vanishing
+          const timeSinceTwoHands = performance.now() - lastTwoHandsTimeRef.current;
+          if (timeSinceTwoHands > 600) {
+            pointsRef.current = [];
+            setPointsState([]);
+            setPinchLActive(false);
+            setPinchRActive(false);
+            setIsThumbsUpL(false);
+            setIsThumbsUpR(false);
+            setLeftVelocity({ x: 0, y: 0 });
+            setRightVelocity({ x: 0, y: 0 });
+            setLeftDepth(0);
+            setRightDepth(0);
+          } else {
+            // Keep lens visible, decay velocities to zero, turn off active pinch states
+            setPinchLActive(false);
+            setPinchRActive(false);
+            setIsThumbsUpL(false);
+            setIsThumbsUpR(false);
+            setLeftVelocity({ x: 0, y: 0 });
+            setRightVelocity({ x: 0, y: 0 });
+          }
+        }
+      } else {
+        // No hands detected, check grace period
+        const timeSinceTwoHands = performance.now() - lastTwoHandsTimeRef.current;
+        if (timeSinceTwoHands > 600) {
           pointsRef.current = [];
           setPointsState([]);
           setPinchLActive(false);
@@ -268,18 +308,14 @@ export const useHandTracker = (
           setRightVelocity({ x: 0, y: 0 });
           setLeftDepth(0);
           setRightDepth(0);
+        } else {
+          setPinchLActive(false);
+          setPinchRActive(false);
+          setIsThumbsUpL(false);
+          setIsThumbsUpR(false);
+          setLeftVelocity({ x: 0, y: 0 });
+          setRightVelocity({ x: 0, y: 0 });
         }
-      } else {
-        pointsRef.current = [];
-        setPointsState([]);
-        setPinchLActive(false);
-        setPinchRActive(false);
-        setIsThumbsUpL(false);
-        setIsThumbsUpR(false);
-        setLeftVelocity({ x: 0, y: 0 });
-        setRightVelocity({ x: 0, y: 0 });
-        setLeftDepth(0);
-        setRightDepth(0);
       }
     }
   };
