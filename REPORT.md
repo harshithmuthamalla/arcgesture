@@ -1,82 +1,75 @@
-# ArcGesture Desktop Operator: Interactive Action Report & Spec
-
-This report serves as the official user manual, architectural specification, and interaction checklist for the **ArcGesture Desktop Operator** application.
-
----
-
-## 1. Step-by-Step Action Guide
-
-Perform the following sequences in front of your webcam to test the full capability of the system:
-
-### 🟩 Step 1: Initialize the Bounding Frame
-*   **Action**: Raise both hands in front of the camera, palms facing the screen, fingers spread.
-*   **Result**: The MediaPipe skeleton renders in silver joints. A glowing neon quadrilateral bounding frame snaps to your index fingertips and thumbs, tracking your movements.
-
-### 🔄 Step 2: Cycle Through Visual Effects
-*   **Action**: Bring your hand knuckles close together (knuckle clap distance $< 10\%$) and pull them apart.
-*   **Result**: An audio pitch swoop plays, and the visual effect inside the lens cycles. Repeat to cycle through all 7 available modes (Particle, Burn, Silhouette, Thermal, Pixel, Glitch, Neon Edges).
-
-### 🌀 Step 3: Swirl the Particle Flow Field
-*   **Action**: Set the active lens to **Effect 0 (Particle Matrix)**. Move your index fingers around inside the quad.
-*   **Result**: The grid particles warp and slide away from your fingertips, and the background image ripples dynamically behind your fingers like digital ink swirling in water.
-
-### 🔊 Step 4: Trigger the Volumetric Depth Bass Hum
-*   **Action**: Push both hands very close to the camera, then pull them far back.
-*   **Result**: A continuous low low-pass hum plays. As your hands approach the camera, the hum shifts to a heavy bass rumble and the neon edge glow in the shader flares up (depth-reactive bloom).
-
-### 🎛️ Step 5: Toggle the Holographic Settings Panel
-*   **Action**: Move either hand into the right 15% width margin of the screen.
-*   **Result**: A futuristic glassmorphism settings drawer slides in from the right edge, showing control sliders for speed, grain, and neon outlines.
-
-### 🎚️ Step 6: Collide Finger with Settings Sliders
-*   **Action**: Hover your index fingertip vertically over the sliders (Speed, Grain, Neon Glow) inside the panel.
-*   **Result**: Bounding box coordinates collision triggers, updating the slider levels and adjusting the WebGL shader rendering speed, noise, or border glows in real-time.
-
-### 💥 Step 7: Cast Refractive Pinch Shockwaves
-*   **Action**: Pinch index finger and thumb of either hand together.
-*   **Result**: Refractive shockwave glass ripples emanate outward from the pinch coordinates.
-
-### 💀 Step 8: Trigger the X-Ray Scanner
-*   **Action**: Pinch index finger and thumb of **both** hands simultaneously.
-*   **Result**: The quad collapses into a thin horizontal strip, transitioning instantly to X-Ray mode (volume blue hues, Sobel cyan edges, film grain jitter, and scrolling scanlines).
-
-### 📹 Step 9: Record & Export Your Performance
-*   **Action**: Fold all fingers except your thumb, pointing it straight up (**Thumbs-Up** gesture).
-*   **Result**: A green circular percentage loader fills up. When it hits 100%, a blinking red `REC` overlay appears. The app records the Three.js composite canvas for 5 seconds and triggers a WebM download.
+# ArcGesture: Webcam-Only Spatial Computing Interface
+### Technical Specification, Architecture & User Guide
 
 ---
 
-## 2. Technical Features Manifest
+## 1. Executive Summary
 
-| Feature | Behind-the-scenes Logic & Math | Visual / System Use |
+**ArcGesture** is an interactive spatial computing overlay that transforms a standard 2D RGB webcam into a real-time, gesture-controlled HUD interface. Using on-device machine learning (MediaPipe Hands) and GPU-accelerated graphics (Three.js & custom GLSL shaders), ArcGesture projects a hand-anchored, bilinearly deformed visual canvas that follows your hand rotations, translations, depth displacement, and specific gesture combinations.
+
+### Core Value Proposition
+- **Zero-Hardware Dependency**: Runs at 60 FPS on any consumer laptop webcam, bypassing the need for dedicated depth sensors (LiDAR, Leap Motion, or headsets).
+- **Spatial Anchoring**: The UI is physically anchored to your hands in 3D space, translating on the Z-axis (pseudo-depth) and warping to match tilt and span.
+- **Fail-Safe Robustness**: Integrated calibration sequencing, 600ms tracking grace buffers, and keyboard fail-safe backups guarantee demo reliability.
+
+---
+
+## 2. Interactive Gesture & Action Guide
+
+Perform the following sequences to interact with the spatial interface:
+
+| Action / Gesture | Physical Movement | Visual HUD Response |
 | :--- | :--- | :--- |
-| **Bilinear Quad Deformation** | $V(u,v) = (1-u)(1-v)bl + u(1-v)br + (1-u)v\,tl + uv\,tr$ | Warps a 32x32 plane geometry to form the dynamic bounding lens between hands. |
-| **Bilinear Screen-Space UV** | $u_{screen} = \frac{vx + 1}{2}, \quad v_{screen} = \frac{vy + 1}{2}$ | Projects the background video feed onto the deformed quad with perfect spatial alignment. |
-| **Curl Fluid Flow Field** | $\vec{F}_{swirl} = \begin{bmatrix}-dy\\dx\end{bmatrix} \times \text{strength}$ | Displaces UV coordinates based on fingertip velocity vectors to simulate fluid currents. |
-| **Fingertip Bounding Collision** | $\text{Hit} \iff mx > 0.78 \land my \in [SliderRange]$ | Connects 2D hand tracker coordinate bounds to slider values, creating holographic controls. |
-| **Continuous Audio Synthesizer** | Sawtooth osc + 180Hz Lowpass filter + Gain envelope | Generates the continuous background humming drone. Maps depth to frequency. |
-| **Thumbs-Up MediaRecorder** | Canvas `captureStream(30)` + MediaRecorder API | Captures and exports WebM video files directly from the browser. |
+| **Harness Calibration** | Raise both hands and move them apart ($>42\%$ screen width) | Initializes the tracking boundary, transitioning from the startup sequence to the active play area. |
+| **Effect Cycling** | Bring knuckles close together ($<20\%$ width) or press **Spacebar/Enter** | Plays a frequency swoop sound and cycles through the 7 WebGL shader modes. |
+| **Grid Warp** | Hover index fingers inside the active quad (Effect 0) | Warps the twinkling particle flow field away from your fingertips. |
+| **Pseudo-Depth Hum** | Push hands closer to camera / pull them back | Adjusts continuous sawtooth drone pitch (110Hz to 55Hz) and flares the neon edge bloom. |
+| **Holographic Zoom** | Spread hands wide / bring them closer (in Use Case mode) | Zooms in/out on the Medical MRI brain scan or mechanical Blueprint drawing. |
+| **Holographic Panning** | Shift both hands left, right, up, or down | Scrolls/pans the document texture inside the hand-anchored window. |
+| **Fist-Lock Field** | Fold both hands into a tight fist | Freezes the lens coordinates in 3D space. Open hands to release. |
+| **Portal Shockwave** | Tap hands (clap) and pull them apart very fast ($>1.4$ speed) | Generates a global expanding refractive ripple ring. |
+| **Thumbs-Up Export** | Hold thumbs-up on either hand for 2 seconds | Blinks a red `REC` indicator, records 5 seconds of the canvas stream, and exports a WebM video. |
 
 ---
 
-## 3. Engineering Architecture Overview
+## 3. Shader Effects Suite
 
-```mermaid
-graph TD
-    Webcam[Webcam Video Stream] -->|Hidden Node| MediaPipe[MediaPipe Hand Landmarker]
-    MediaPipe -->|21 3D Landmarks| HandTracker[useHandTracker.ts]
-    
-    HandTracker -->|Attractors, Gestures, Depth, Velocity| App[App.tsx]
-    HandTracker -->|Points coordinates| skeleton[2D Canvas overlay]
-    
-    App -->|Slider Values, Recording States| HUD[Tailwind CSS Panel HUD]
-    App -->|Oscillator Gain, Freq| WebAudio[Web Audio Synth Engine]
-    
-    App -->|Props & State| EffectsCanvas[EffectsCanvas.tsx]
-    EffectsCanvas -->|WebGL Uniforms| EffectShader[effectShader.ts]
-    
-    EffectShader -->|renderCompositeFrame| ThreeJS[Three.js Canvas]
-    ThreeJS -->|captureStream| MediaRecorder[MediaRecorder Export]
-```
+1. **Twinkling Particle Grid**: A 90x90 matrix of grid squares that twinkle, with grid particle sizes scaling dynamically based on hand Z-depth.
+2. **Technical Blueprint**: Projects a cyan mechanical grid (`#021544`) with circular schematics and Sobel outlines of your hands drawing on top.
+3. **Glow Silhouette**: High-contrast outline core with depth-reactive edge-bloom cyan halos.
+4. **Thermal Heatmap**: Volumetric heat mapping ranging from cold blue to hot green, yellow, and red.
+5. **Pixelated Dot-Matrix**: Downsampled 80x80 green circle matrix showing camera contours.
+6. **Glitch Aberration**: High-frequency horizontal noise lines combined with red/blue chromatic aberration.
+7. **Neon Edges**: High-contrast Sobel edge extraction rendering lines in cyber cyan/green.
+8. **X-Ray Scanner (Dual Pinch)**: Collapses the quad to a 15% height scanline strip displaying cyan bones and Hash grain.
 
-*   **Render Pipeline**: The background webcam stream is bound to a full-screen background quad inside Three.js. The deformed lens plane renders in front of it. This ensures the Three.js canvas contains the complete composite image, allowing the MediaRecorder to capture the webcam and visual shaders together in a single WebM file.
+---
+
+## 4. Engineering Architecture & Mathematics
+
+### Bilinear Mesh Interpolation
+The 32x32 plane is deformed in 3D to match a 4-point quadrilateral defined by the left index ($Q_{tl}$), right index ($Q_{tr}$), left thumb ($Q_{bl}$), and right thumb ($Q_{br}$).
+$$V(u,v) = (1-u)(1-v)Q_{bl} + u(1-v)Q_{br} + (1-u)v\,Q_{tl} + uv\,Q_{tr}$$
+We dynamically translate the Z vertex coordinates based on hand depth:
+$$V_z = -0.15 + \text{avgDepth} \times 0.3$$
+
+### WebGL Fluid Curl-Noise Warp
+Index fingertip velocities are mapped to GPU vector displacement, warping the UV texture coordinates:
+$$\vec{F}_{swirl} = \begin{bmatrix}-dy\\dx\end{bmatrix} \times (1.0 - \text{dist} / 0.28) \times 0.045$$
+
+### Fast-Spread Shockwave Ripple
+The combo gesture triggers a refraction wave calculated in GLSL:
+$$\text{Ripple} = \sin(\text{dist} \times 45.0 - \text{time} \times 15.0) \times 0.016 \times \exp(-\text{time} \times 1.25)$$
+
+---
+
+## 5. Live Demo Presentation Script
+
+1. **Startup (0:00 - 0:10)**: Boot the app. Show judges the **Calibration Screen**. Raise hands and move them apart to calibrate.
+2. **Proof of Concept (0:10 - 0:25)**: Point to the bottom-left **Sensor Proof Panel** proving there are no depth sensors active.
+3. **Interactive Warping (0:25 - 0:40)**: Hover fingers inside the Particle Grid. Sweep index fingers to trigger the fluid curl swirls.
+4. **Volumetric Depth (0:40 - 0:55)**: Push hands close to the camera. The audio hum drops to a heavy bass rumble and the neon bloom flares up.
+5. **Mission Mode (0:55 - 1:15)**: Click "Start Field Stabilization". Keep stability high by moving fingers, scanning, and expanding. Complete the mission and show your spatial operator rank scorecard.
+6. **Use Cases (1:15 - 1:30)**: Slide in the settings panel by hovering in the right margin. Toggle **Medical** or **Draft** modes. Spread hands to zoom in on the brain scan/blueprint. Move hands to pan.
+7. **Fist-Lock (1:30 - 1:40)**: Fold both hands into a fist to lock the frame. Explain the static blueprint drawing while moving your hands. Open hands to release.
+8. **Thumbs-up Record (1:40 - 2:00)**: Hold a thumbs-up for 2 seconds. Record a 5-second WebM clip and download the video to show judges.
