@@ -33,6 +33,7 @@ export const useHandTracker = (
   const pointsRef = useRef<Point[]>([]);
   const lastClapTimeRef = useRef<number>(0);
   const lastTwoHandsTimeRef = useRef<number>(0); // Tracking loss grace period timer
+  const lastClapDistRef = useRef<number>(1.0); // Last known distance between hands
   
   const prevLeftRef = useRef<Point>({ x: 0.5, y: 0.5 });
   const prevRightRef = useRef<Point>({ x: 0.5, y: 0.5 });
@@ -260,9 +261,11 @@ export const useHandTracker = (
           const dx_mcp = pR_mcp.x - pL_mcp.x;
           const dy_mcp = pR_mcp.y - pL_mcp.y;
           const clapDist = Math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp);
+          
+          lastClapDistRef.current = clapDist; // Record distance
 
-          // Clapping distance threshold increased to 0.18 to prevent model occlusion failure
-          if (clapDist < 0.18 && activeMode !== 'xray') {
+          // Clapping distance threshold increased to 0.20
+          if (clapDist < 0.20 && activeMode !== 'xray') {
             const nowClap = performance.now();
             if (nowClap - lastClapTimeRef.current > 1000) {
               lastClapTimeRef.current = nowClap;
@@ -271,7 +274,18 @@ export const useHandTracker = (
             }
           }
         } else {
-          // If we detect 1 hand, check grace period timer to prevent vanishing
+          // If hand count drops below 2:
+          // Transition-based clap detection: if hands were close in the last frame they were both tracked
+          if (lastClapDistRef.current < 0.28) {
+            const nowClap = performance.now();
+            if (nowClap - lastClapTimeRef.current > 1000) {
+              lastClapTimeRef.current = nowClap;
+              playSwitchSound();
+              onEffectSwitch();
+            }
+          }
+          lastClapDistRef.current = 1.0; // Reset last known distance
+
           const timeSinceTwoHands = performance.now() - lastTwoHandsTimeRef.current;
           if (timeSinceTwoHands > 600) {
             pointsRef.current = [];
@@ -285,7 +299,6 @@ export const useHandTracker = (
             setLeftDepth(0);
             setRightDepth(0);
           } else {
-            // Keep lens visible, decay velocities to zero, turn off active pinch states
             setPinchLActive(false);
             setPinchRActive(false);
             setIsThumbsUpL(false);
@@ -295,7 +308,17 @@ export const useHandTracker = (
           }
         }
       } else {
-        // No hands detected, check grace period
+        // No hands detected at all: check transition clap
+        if (lastClapDistRef.current < 0.28) {
+          const nowClap = performance.now();
+          if (nowClap - lastClapTimeRef.current > 1000) {
+            lastClapTimeRef.current = nowClap;
+            playSwitchSound();
+            onEffectSwitch();
+          }
+        }
+        lastClapDistRef.current = 1.0; // Reset
+
         const timeSinceTwoHands = performance.now() - lastTwoHandsTimeRef.current;
         if (timeSinceTwoHands > 600) {
           pointsRef.current = [];

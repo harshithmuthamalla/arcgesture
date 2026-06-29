@@ -4,7 +4,8 @@ import { EffectsCanvas } from './components/EffectsCanvas';
 import {
   startBackgroundHum,
   stopBackgroundHum,
-  updateBackgroundHum
+  updateBackgroundHum,
+  playSwitchSound
 } from './utils/audio';
 
 export default function App() {
@@ -59,6 +60,19 @@ export default function App() {
   const triggerEffectSwitch = () => {
     setEffectIndex((prev) => (prev + 1) % 7);
   };
+
+  // Keyboard Spacebar / Enter key fail-safe for mode switching during live demos
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        playSwitchSound();
+        triggerEffectSwitch();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const {
     modelsReady,
