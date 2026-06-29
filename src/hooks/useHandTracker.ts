@@ -113,7 +113,7 @@ export const useHandTracker = (
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (video.readyState >= HTMLVideoElement.HAVE_CURRENT_DATA) {
+    if (video.readyState >= 2) {
       const results = landmarkerRef.current.detectForVideo(video, performance.now());
       
       if (results.landmarks && results.landmarks.length > 0) {
