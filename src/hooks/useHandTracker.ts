@@ -16,6 +16,8 @@ export const useHandTracker = (
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [effectMode, setEffectMode] = useState<'particle' | 'xray'>('particle');
   const [pointsState, setPointsState] = useState<Point[]>([]);
+  const [rawLandmarks, setRawLandmarks] = useState<any[]>([]);
+  const [controlMapping, setControlMapping] = useState<'framing' | 'palm-zoom' | 'direct'>('direct');
   
   // Interactive coordinates and gestures states
   const [leftAttractor, setLeftAttractor] = useState<Point>({ x: 0.5, y: 0.5 });
@@ -188,6 +190,7 @@ export const useHandTracker = (
       
       if (results.landmarks && results.landmarks.length > 0) {
         drawSkeleton(ctx, results.landmarks);
+        setRawLandmarks(results.landmarks);
 
         if (results.landmarks.length === 2) {
           lastTwoHandsTimeRef.current = performance.now(); // update grace period timer
@@ -248,39 +251,83 @@ export const useHandTracker = (
 
           // 1. Calculate target points (only update if field is NOT locked)
           if (!lockActive) {
-            let targetPoints: Point[] = [];
+            if (true) {
+              let targetPoints: Point[] = [];
 
-            if (activeMode === 'xray') {
-              const pL_idx = handL[8];
-              const pL_thb = handL[4];
-              const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
+              if (controlMapping === 'framing') {
+                // Framing gesture: corners mapped to Index Tips and Thumb Tips, with amplified motion scaling
+                const pL_idx = handL[8];
+                const pL_thb = handL[4];
+                const pR_idx = handR[8];
+                const pR_thb = handR[4];
 
-              const pR_idx = handR[8];
-              const pR_thb = handR[4];
-              const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
+                const midX = (pL_idx.x + pR_idx.x + pL_thb.x + pR_thb.x) / 4;
+                const midY = (pL_idx.y + pR_idx.y + pL_thb.y + pR_thb.y) / 4;
 
-              targetPoints = [
-                { x: cL.x, y: cL.y - 0.075 },
-                { x: cR.x, y: cR.y - 0.075 },
-                { x: cL.x, y: cL.y + 0.075 },
-                { x: cR.x, y: cR.y + 0.075 }
-              ];
+                const distX = Math.abs(pR_idx.x - pL_idx.x);
+                const distY = Math.abs((pL_thb.y + pR_thb.y) / 2 - (pL_idx.y + pR_idx.y) / 2);
+
+                // Amplification factor of 1.65 to expand screen beyond physical hand limits
+                const qW = Math.max(0.15, Math.min(0.95, distX * 1.65));
+                const qH = Math.max(0.10, Math.min(0.85, distY * 1.65));
+
+                targetPoints = [
+                  { x: midX - qW / 2, y: midY - qH / 2 }, // Top-Left
+                  { x: midX + qW / 2, y: midY - qH / 2 }, // Top-Right
+                  { x: midX - qW / 2, y: midY + qH / 2 }, // Bottom-Left
+                  { x: midX + qW / 2, y: midY + qH / 2 }  // Bottom-Right
+                ];
+              } else if (controlMapping === 'palm-zoom') {
+                // Custom Palm Zoom Control: box centers at midpoint between knuckles, spreads by distance
+                const pL_knuckle = handL[9];
+                const pR_knuckle = handR[9];
+                const midX = (pL_knuckle.x + pR_knuckle.x) / 2;
+                const midY = (pL_knuckle.y + pR_knuckle.y) / 2;
+                const distX = Math.abs(pR_knuckle.x - pL_knuckle.x);
+                
+                const qW = Math.max(0.15, Math.min(0.9, distX * 1.35));
+                const qH = qW * 0.7; // Standard 16:9 ratio in normalized screen coordinates
+
+                targetPoints = [
+                  { x: midX - qW / 2, y: midY - qH / 2 }, // Top-Left
+                  { x: midX + qW / 2, y: midY - qH / 2 }, // Top-Right
+                  { x: midX - qW / 2, y: midY + qH / 2 }, // Bottom-Left
+                  { x: midX + qW / 2, y: midY + qH / 2 }  // Bottom-Right
+                ];
+              } else if (activeMode === 'xray') {
+                const pL_idx = handL[8];
+                const pL_thb = handL[4];
+                const cL = { x: (pL_idx.x + pL_thb.x) / 2, y: (pL_idx.y + pL_thb.y) / 2 };
+
+                const pR_idx = handR[8];
+                const pR_thb = handR[4];
+                const cR = { x: (pR_idx.x + pR_thb.x) / 2, y: (pR_idx.y + pR_thb.y) / 2 };
+
+                targetPoints = [
+                  { x: cL.x, y: cL.y - 0.075 },
+                  { x: cR.x, y: cR.y - 0.075 },
+                  { x: cL.x, y: cL.y + 0.075 },
+                  { x: cR.x, y: cR.y + 0.075 }
+                ];
+              } else {
+                targetPoints = [
+                  handL[8],
+                  handR[8],
+                  handL[4],
+                  handR[4]
+                ];
+              }
+
+              if (pointsRef.current.length !== 4) {
+                pointsRef.current = targetPoints;
+              } else {
+                pointsRef.current = pointsRef.current.map((prev, idx) => ({
+                  x: prev.x + alpha * (targetPoints[idx].x - prev.x),
+                  y: prev.y + alpha * (targetPoints[idx].y - prev.y)
+                }));
+              }
             } else {
-              targetPoints = [
-                handL[8],
-                handR[8],
-                handL[4],
-                handR[4]
-              ];
-            }
-
-            if (pointsRef.current.length !== 4) {
-              pointsRef.current = targetPoints;
-            } else {
-              pointsRef.current = pointsRef.current.map((prev, idx) => ({
-                x: prev.x + alpha * (targetPoints[idx].x - prev.x),
-                y: prev.y + alpha * (targetPoints[idx].y - prev.y)
-              }));
+              pointsRef.current = [];
             }
           }
           setPointsState([...pointsRef.current]);
@@ -325,6 +372,7 @@ export const useHandTracker = (
           if (timeSinceTwoHands > 600) {
             pointsRef.current = [];
             setPointsState([]);
+            setRawLandmarks([]);
             setPinchLActive(false);
             setPinchRActive(false);
             setIsThumbsUpL(false);
@@ -345,6 +393,7 @@ export const useHandTracker = (
         }
       } else {
         // No hands detected at all: check transition clap
+        setRawLandmarks([]);
         setIsFistL(false);
         setIsFistR(false);
         setIsFieldLocked(false);
@@ -363,6 +412,7 @@ export const useHandTracker = (
         if (timeSinceTwoHands > 600) {
           pointsRef.current = [];
           setPointsState([]);
+          setRawLandmarks([]);
           setPinchLActive(false);
           setPinchRActive(false);
           setIsThumbsUpL(false);
@@ -404,6 +454,9 @@ export const useHandTracker = (
     isFistR,
     isFieldLocked,
     clapDist,
+    rawLandmarks,
+    controlMapping,
+    setControlMapping,
     processFrame,
     setErrorMsg
   };

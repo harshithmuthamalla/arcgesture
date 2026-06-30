@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EffectShader, BackgroundShader } from '../shaders/effectShader';
 import type { Point } from '../hooks/useHandTracker';
+import { getAudioPulse } from '../utils/audio';
 
 interface XRayWindowProps {
   video: HTMLVideoElement;
@@ -30,6 +31,7 @@ interface XRayWindowProps {
   docPan: { x: number; y: number };
   shockwaveTime: number;
   shockwaveCenter: { x: number; y: number };
+  audioReactive: boolean;
 }
 
 const XRayWindow: React.FC<XRayWindowProps> = ({
@@ -53,7 +55,8 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
   docZoom,
   docPan,
   shockwaveTime,
-  shockwaveCenter
+  shockwaveCenter,
+  audioReactive
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
@@ -76,30 +79,10 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
       ctx.fillRect(0, 0, 512, 512);
 
       // Draw cerebrum contour (outer border)
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 3.5;
-      ctx.beginPath();
-      ctx.ellipse(256, 256, 140, 190, 0, 0, 2 * Math.PI);
-      ctx.stroke();
-
-      // Draw brain folds
       ctx.strokeStyle = '#334155';
       ctx.lineWidth = 2.0;
-      for (let i = 0; i < 7; i++) {
-        ctx.beginPath();
-        ctx.arc(256, 256, 35 + i * 20, 0.2, Math.PI - 0.2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(256, 256, 35 + i * 20, Math.PI + 0.2, 2 * Math.PI - 0.2);
-        ctx.stroke();
-      }
-
-      // Draw red tracking crosshairs
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
-      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(256, 0); ctx.lineTo(256, 512);
-      ctx.moveTo(0, 256); ctx.lineTo(512, 256);
+      ctx.ellipse(256, 256, 140, 190, 0, 0, 2 * Math.PI);
       ctx.stroke();
 
       // Tech details overlay text
@@ -107,7 +90,7 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
       ctx.font = 'bold 15px monospace';
       ctx.fillText('MRI SECTION AX-109', 24, 45);
       ctx.fillText('PATIENT: OPERATOR_1', 24, 75);
-      ctx.fillText('FREQ: 43.8MHz // GAIN: 12dB', 24, 105);
+      ctx.fillText('3D SCANNER ACTIVE', 24, 105);
     } 
     // 2. Draw mechanical machine blueprint
     else if (useCase === 'blueprint') {
@@ -122,31 +105,12 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
         ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
       }
 
-      // Drafting Gears, shafts, and guides
-      ctx.strokeStyle = '#0284c7';
-      ctx.lineWidth = 2.0;
-      ctx.beginPath(); ctx.arc(256, 256, 110, 0, 2 * Math.PI); ctx.stroke();
-      ctx.beginPath(); ctx.arc(256, 256, 40, 0, 2 * Math.PI); ctx.stroke();
-
-      // Gear teeth lines
-      for (let a = 0; a < 2 * Math.PI; a += 0.25) {
-        ctx.beginPath();
-        ctx.moveTo(256 + Math.cos(a) * 110, 256 + Math.sin(a) * 110);
-        ctx.lineTo(256 + Math.cos(a) * 125, 256 + Math.sin(a) * 125);
-        ctx.stroke();
-      }
-
-      // Compass circle arcs
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
-      ctx.beginPath(); ctx.arc(256, 256, 200, 0.2, 1.2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(256, 256, 200, Math.PI, Math.PI + 1.0); ctx.stroke();
-
       // Tech details text
       ctx.fillStyle = '#38bdf8';
       ctx.font = 'bold 15px monospace';
       ctx.fillText('DWG: DRAFT_GEARBOX_A', 24, 45);
       ctx.fillText('SCALE: 1:1.0 // METRIC: mm', 24, 75);
-      ctx.fillText('FIELD LOCKED SCHEMA', 24, 105);
+      ctx.fillText('3D SCHEMA VIEW ACTIVE', 24, 105);
     }
 
     const tex = new THREE.CanvasTexture(canvas);
@@ -200,6 +164,9 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
     mat.uniforms.uSpeedMultiplier.value = speedMultiplier;
     mat.uniforms.uGrainMultiplier.value = grainMultiplier;
     mat.uniforms.uNeonMultiplier.value = neonMultiplier;
+
+    // Audio reactive uniform
+    mat.uniforms.uAudioPulse.value = audioReactive ? getAudioPulse() : 0.0;
 
     // Document zoom & pan config
     mat.uniforms.uUseDoc.value = useCase !== 'standard' ? 1.0 : 0.0;
@@ -281,7 +248,8 @@ const XRayWindow: React.FC<XRayWindowProps> = ({
     uDocZoom: { value: 1.0 },
     uDocPan: { value: new THREE.Vector2(0, 0) },
     uShockwaveTime: { value: -1.0 },
-    uShockwaveCenter: { value: new THREE.Vector2(0.5, 0.5) }
+    uShockwaveCenter: { value: new THREE.Vector2(0.5, 0.5) },
+    uAudioPulse: { value: 0.0 }
   });
 
   const geometryRef = useRef<THREE.PlaneGeometry | null>(null);
@@ -358,6 +326,210 @@ const BackgroundPlane: React.FC<BackgroundPlaneProps> = ({ video }) => {
   );
 };
 
+interface Hologram3DModelProps {
+  useCase: 'standard' | 'medical' | 'blueprint';
+  effectMode: 'particle' | 'xray';
+  pointsRef: React.MutableRefObject<Point[]>;
+  leftDepth: number;
+  rightDepth: number;
+  leftAttractor: Point;
+  rightAttractor: Point;
+  audioReactive: boolean;
+  docZoom: number;
+  docPan: { x: number; y: number };
+  isFieldLocked: boolean;
+}
+
+const Hologram3DModel: React.FC<Hologram3DModelProps> = ({
+  useCase,
+  effectMode,
+  pointsRef,
+  leftDepth,
+  rightDepth,
+  leftAttractor,
+  rightAttractor,
+  audioReactive,
+  docZoom,
+  docPan,
+  isFieldLocked
+}) => {
+  const groupRef = useRef<THREE.Group>(null);
+  const gear1Ref = useRef<THREE.Group>(null);
+  const gear2Ref = useRef<THREE.Group>(null);
+  const brainRingRef = useRef<THREE.Mesh>(null);
+
+  useFrame((state) => {
+    if (!groupRef.current) return;
+
+    const corners = pointsRef.current;
+    if (corners.length === 4 && useCase !== 'standard') {
+      groupRef.current.visible = true;
+
+      const mappedCorners = corners.map((p) => {
+        const mx = 1.0 - p.x;
+        return {
+          x: mx * 2.0 - 1.0,
+          y: (1.0 - p.y) * 2.0 - 1.0
+        };
+      });
+
+      const bl = mappedCorners[2];
+      const br = mappedCorners[3];
+      const tl = mappedCorners[0];
+      const tr = mappedCorners[1];
+
+      const centerX = (bl.x + br.x + tl.x + tr.x) / 4;
+      const centerY = (bl.y + br.y + tl.y + tr.y) / 4;
+      
+      const width = Math.sqrt(Math.pow(br.x - bl.x, 2) + Math.pow(br.y - bl.y, 2));
+      const height = Math.sqrt(Math.pow(tl.x - bl.x, 2) + Math.pow(tl.y - bl.y, 2));
+      const avgDepthVal = (leftDepth + rightDepth) / 2;
+      const centerZ = -0.15 + avgDepthVal * 0.3;
+
+      // Center the 3D model slightly in front of the lens plane coordinates
+      groupRef.current.position.set(centerX + docPan.x * 0.18, centerY + docPan.y * 0.18, centerZ + 0.05);
+
+      // Adjust model sizing based on boundary width, camera depth zoom, and microphone audio reactivity
+      const baseScale = Math.min(width, height) * 0.42;
+      let pulse = 0.0;
+      if (audioReactive) {
+        pulse = getAudioPulse();
+      }
+      groupRef.current.scale.setScalar(baseScale * docZoom * (1.0 + pulse * 0.4));
+
+      // Rotate based on index finger line angle + auto rotation
+      const dx = (1.0 - rightAttractor.x) - (1.0 - leftAttractor.x);
+      const dy = rightAttractor.y - leftAttractor.y;
+      const angle = Math.atan2(dy, dx);
+
+      groupRef.current.rotation.z = angle;
+      groupRef.current.rotation.y = state.clock.getElapsedTime() * 0.65;
+      groupRef.current.rotation.x = Math.sin(state.clock.getElapsedTime() * 0.18) * 0.25;
+
+      // Gears animation
+      if (useCase === 'blueprint') {
+        if (gear1Ref.current) {
+          gear1Ref.current.rotation.y = state.clock.getElapsedTime() * 1.6;
+        }
+        if (gear2Ref.current) {
+          gear2Ref.current.rotation.y = -state.clock.getElapsedTime() * 1.6;
+        }
+      }
+
+      // Brain scan ring animation
+      if (useCase === 'medical' && brainRingRef.current) {
+        brainRingRef.current.position.y = Math.sin(state.clock.getElapsedTime() * 2.8) * 0.28;
+      }
+    } else {
+      groupRef.current.visible = false;
+    }
+  });
+
+  const mainColor = isFieldLocked
+    ? '#f59e0b'
+    : effectMode === 'xray'
+      ? '#22d3ee'
+      : '#10b981';
+
+  const innerColor = effectMode === 'xray' ? '#ec4899' : '#06b6d4';
+
+  const teethElements = useMemo(() => {
+    const elements = [];
+    const count = 8;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2;
+      elements.push(
+        <mesh key={i} position={[Math.cos(a) * 0.22, 0, Math.sin(a) * 0.22]} rotation={[0, -a, 0]}>
+          <boxGeometry args={[0.07, 0.05, 0.05]} />
+          <meshBasicMaterial wireframe color={mainColor} />
+        </mesh>
+      );
+    }
+    return elements;
+  }, [mainColor]);
+
+  const teeth2Elements = useMemo(() => {
+    const elements = [];
+    const count = 6;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2;
+      elements.push(
+        <mesh key={i} position={[Math.cos(a) * 0.12, 0, Math.sin(a) * 0.12]} rotation={[0, -a, 0]}>
+          <boxGeometry args={[0.05, 0.05, 0.04]} />
+          <meshBasicMaterial wireframe color={mainColor} />
+        </mesh>
+      );
+    }
+    return elements;
+  }, [mainColor]);
+
+  return (
+    <group ref={groupRef}>
+      {/* 3D Medical Brain Scan model */}
+      {useCase === 'medical' && (
+        <group>
+          {/* Lobe Left */}
+          <mesh position={[-0.11, 0.03, 0]} scale={[1.3, 0.95, 0.9]}>
+            <sphereGeometry args={[0.2, 12, 12]} />
+            <meshBasicMaterial wireframe color={mainColor} transparent opacity={0.8} />
+          </mesh>
+          {/* Lobe Right */}
+          <mesh position={[0.11, 0.03, 0]} scale={[1.3, 0.95, 0.9]}>
+            <sphereGeometry args={[0.2, 12, 12]} />
+            <meshBasicMaterial wireframe color={mainColor} transparent opacity={0.8} />
+          </mesh>
+          {/* Stem */}
+          <mesh position={[0, -0.2, -0.04]} rotation={[0.15, 0, 0]}>
+            <cylinderGeometry args={[0.05, 0.035, 0.2, 8]} />
+            <meshBasicMaterial wireframe color={mainColor} />
+          </mesh>
+          {/* Inner core */}
+          <mesh>
+            <sphereGeometry args={[0.1, 8, 8]} />
+            <meshBasicMaterial color={innerColor} transparent opacity={effectMode === 'xray' ? 0.8 : 0.3} />
+          </mesh>
+          {/* Scan ring */}
+          <mesh ref={brainRingRef} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[0.34, 0.012, 6, 24]} />
+            <meshBasicMaterial color={mainColor} />
+          </mesh>
+        </group>
+      )}
+
+      {/* 3D CAD Gear model */}
+      {useCase === 'blueprint' && (
+        <group>
+          {/* Gear 1 */}
+          <group ref={gear1Ref} position={[-0.18, 0, 0]}>
+            <mesh>
+              <cylinderGeometry args={[0.2, 0.2, 0.04, 16]} />
+              <meshBasicMaterial wireframe color={mainColor} />
+            </mesh>
+            {teethElements}
+            <mesh>
+              <cylinderGeometry args={[0.04, 0.04, 0.08, 8]} />
+              <meshBasicMaterial color={innerColor} />
+            </mesh>
+          </group>
+
+          {/* Gear 2 */}
+          <group ref={gear2Ref} position={[0.16, 0, 0]} rotation={[0, Math.PI / 6, 0]}>
+            <mesh>
+              <cylinderGeometry args={[0.1, 0.1, 0.04, 12]} />
+              <meshBasicMaterial wireframe color={mainColor} />
+            </mesh>
+            {teeth2Elements}
+            <mesh>
+              <cylinderGeometry args={[0.03, 0.03, 0.08, 8]} />
+              <meshBasicMaterial color={innerColor} />
+            </mesh>
+          </group>
+        </group>
+      )}
+    </group>
+  );
+};
+
 interface EffectsCanvasProps {
   videoElement: HTMLVideoElement | null;
   pointsRef: React.MutableRefObject<Point[]>;
@@ -382,6 +554,8 @@ interface EffectsCanvasProps {
   docPan: { x: number; y: number };
   shockwaveTime: number;
   shockwaveCenter: { x: number; y: number };
+  audioReactive: boolean;
+  isFieldLocked: boolean;
 }
 
 export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
@@ -405,7 +579,9 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
   docZoom,
   docPan,
   shockwaveTime,
-  shockwaveCenter
+  shockwaveCenter,
+  audioReactive,
+  isFieldLocked
 }) => {
   if (!videoElement) return null;
 
@@ -440,6 +616,20 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
           docPan={docPan}
           shockwaveTime={shockwaveTime}
           shockwaveCenter={shockwaveCenter}
+          audioReactive={audioReactive}
+        />
+        <Hologram3DModel
+          useCase={useCase}
+          effectMode={effectMode}
+          pointsRef={pointsRef}
+          leftDepth={leftDepth}
+          rightDepth={rightDepth}
+          leftAttractor={leftAttractor}
+          rightAttractor={rightAttractor}
+          audioReactive={audioReactive}
+          docZoom={docZoom}
+          docPan={docPan}
+          isFieldLocked={isFieldLocked}
         />
       </Canvas>
     </div>

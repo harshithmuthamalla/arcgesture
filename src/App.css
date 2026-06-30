@@ -182,3 +182,39 @@
     border-right-color: var(--border);
   }
 }
+
+/* Polaroid Shutter Flash animation */
+.flash {
+  animation: shutter-flash 0.15s ease-out forwards;
+}
+
+@keyframes shutter-flash {
+  0% { opacity: 0; }
+  25% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Polaroid Print slide-down visual */
+.print {
+  animation: print-slide 1.2s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+}
+
+@keyframes print-slide {
+  0% { transform: translateY(-50px) rotate(-8deg); opacity: 0; }
+  100% { transform: translateY(0) rotate(-3deg); opacity: 1; }
+}
+
+/* Scrollbar styles for the Gallery */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.3);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.6);
+}

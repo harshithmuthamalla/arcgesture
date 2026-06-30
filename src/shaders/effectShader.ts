@@ -39,6 +39,9 @@ export const EffectShader = {
     uniform float uGrainMultiplier;
     uniform float uNeonMultiplier;
 
+    // Audio Reactivity uniform
+    uniform float uAudioPulse;
+
     varying vec2 vUv;
 
     // 2D Simplex Noise
@@ -175,7 +178,8 @@ export const EffectShader = {
       // Effect 0: Standard Particle Mode
       float bands = fract(baseLum * 10.0 - speedTime * 0.5);
       float contours = smoothstep(0.4, 0.5, bands) - smoothstep(0.5, 0.6, bands);
-      vec3 contourColor = vec3(0.05, 0.3, 0.9) * contours * 1.5 * (1.0 + uBloomStrength * 1.8);
+      // uAudioPulse amplifies contour brightness
+      vec3 contourColor = vec3(0.05, 0.3, 0.9) * contours * 1.5 * (1.0 + uBloomStrength * 1.8 + uAudioPulse * 2.5);
 
       // Interactive Magnetic Grid Warp
       vec2 gridUv = warpedUv;
@@ -199,9 +203,9 @@ export const EffectShader = {
       
       float gridVal = 0.0;
       if (cellPos.x > 0.35 && cellPos.x < 0.65 && cellPos.y > 0.35 && cellPos.y < 0.65) {
-        // Adjust particle size dynamically based on Z-depth (uBloomStrength)
-        float pBoundMin = 0.35 - uBloomStrength * 0.15;
-        float pBoundMax = 0.65 + uBloomStrength * 0.15;
+        // Adjust particle size dynamically based on Z-depth (uBloomStrength) and audio pulse
+        float pBoundMin = 0.35 - (uBloomStrength + uAudioPulse * 0.3) * 0.15;
+        float pBoundMax = 0.65 + (uBloomStrength + uAudioPulse * 0.3) * 0.15;
         if (cellPos.x > pBoundMin && cellPos.x < pBoundMax && cellPos.y > pBoundMin && cellPos.y < pBoundMax) {
           float strobe = sin(speedTime * 15.0 + cellIndex.x * 0.5 + cellIndex.y * 0.3) * 0.5 + 0.5;
           gridVal = strobe;
@@ -223,27 +227,25 @@ export const EffectShader = {
       vec3 subjectGlow = vec3(0.1, 0.3, 0.9) * smoothstep(0.2, 0.8, baseLum) * 0.6;
       vec3 particleFinalColor = originalColor * 0.3 + contourColor + gridOutput + subjectGlow;
 
-      // Glitch helpers
-      float offsetR = snoise(vec2(speedTime * 15.0, warpedUv.y * 30.0)) * 0.012;
-      float offsetB = -snoise(vec2(speedTime * 10.0, warpedUv.y * 20.0)) * 0.012;
+      // Glitch helpers modulated by audio pulse
+      float offsetR = snoise(vec2(speedTime * 15.0, warpedUv.y * 30.0)) * 0.012 * (1.0 + uAudioPulse * 2.0);
+      float offsetB = -snoise(vec2(speedTime * 10.0, warpedUv.y * 20.0)) * 0.012 * (1.0 + uAudioPulse * 2.0);
 
       if (uEffectIndex < 0.5) {
         quadColor = particleFinalColor;
       } else if (uEffectIndex < 1.5) {
-        // Blueprint Mode (Blueprint drafting lines & technical grid - replaces Burning)
-        // 1. Cyan base grid
+        // Blueprint Mode
         vec3 blueprintBg = vec3(0.01, 0.12, 0.35);
         vec2 bRes = vec2(30.0, 30.0 * (uResolution.y / uResolution.x));
         vec2 bGridPos = step(vec2(0.96), fract(warpedUv * bRes));
         float blueGridVal = max(bGridPos.x, bGridPos.y);
         
-        // 2. Concentric circular schematics drawing
         float distToCenter = distance(warpedUv, vec2(0.5));
         float bRings = step(0.97, sin(distToCenter * 48.0)) * 0.2;
         
-        // 3. Technical white outline drawing from Sobel edges
         vec3 blueprintGridLines = mix(vec3(0.1, 0.35, 0.7) * blueGridVal, vec3(0.12, 0.45, 0.8) * (blueGridVal + bRings), 0.6);
-        vec3 blueprintSkeletonLines = vec3(0.3, 0.85, 1.0) * edgeVal * 2.2 * uNeonMultiplier;
+        // uAudioPulse amplifies line brightness
+        vec3 blueprintSkeletonLines = vec3(0.3, 0.85, 1.0) * edgeVal * 2.2 * uNeonMultiplier * (1.0 + uAudioPulse * 1.5);
         
         quadColor = blueprintBg + blueprintGridLines + blueprintSkeletonLines;
       } else if (uEffectIndex < 2.5) {
@@ -252,7 +254,8 @@ export const EffectShader = {
         float edgeNoise = snoise(warpedUv * 200.0 + speedTime * 0.5) * 0.15;
         float core = smoothstep(0.5 + edgeNoise, 0.7 + edgeNoise, contrastLum);
         float halo = smoothstep(0.2 + edgeNoise, 0.6 + edgeNoise, contrastLum);
-        vec3 haloColor = vec3(0.4, 0.9, 1.0) * (1.0 + uBloomStrength * 1.5) * uNeonMultiplier;
+        // uAudioPulse amplifies halo glow size
+        vec3 haloColor = vec3(0.4, 0.9, 1.0) * (1.0 + uBloomStrength * 1.5 + uAudioPulse * 2.0) * uNeonMultiplier;
         quadColor = mix(mix(vec3(0.0), haloColor, halo), vec3(1.0), core);
       } else if (uEffectIndex < 3.5) {
         // Thermal
@@ -283,7 +286,8 @@ export const EffectShader = {
         quadColor -= sin(warpedUv.y * 800.0 + speedTime * 10.0) * 0.05;
       } else {
         // Neon Edges
-        vec3 neonColor = vec3(0.1, 1.0, 0.8) * edgeVal * 2.5 * (1.0 + uBloomStrength * 1.6) * uNeonMultiplier;
+        // uAudioPulse amplifies neon glow width and strength
+        vec3 neonColor = vec3(0.1, 1.0, 0.8) * edgeVal * 2.5 * (1.0 + uBloomStrength * 1.6 + uAudioPulse * 2.0) * uNeonMultiplier;
         quadColor = mix(originalColor * 0.3, neonColor, 0.7);
       }
 
@@ -303,15 +307,15 @@ export const EffectShader = {
       }
 
       // ----------------------------------------------------
-      // MODE 1: X-Ray Mode (from PDF)
+      // MODE 1: X-Ray Mode
       // ----------------------------------------------------
       // 1. Base Volume Blue space
       vec3 baseBlue = vec3(0.1, 0.4, 0.85);
       vec3 darkBlue = vec3(0.02, 0.05, 0.2);
       vec3 xrayVolume = mix(baseBlue, darkBlue, baseLum);
 
-      // 2. Cyan Edges
-      vec3 cyanEdges = vec3(0.0, 0.9, 1.0) * edgeVal * 2.0 * (1.0 + uBloomStrength * 1.5) * uNeonMultiplier;
+      // 2. Cyan Edges - uAudioPulse increases edge glow
+      vec3 cyanEdges = vec3(0.0, 0.9, 1.0) * edgeVal * 2.0 * (1.0 + uBloomStrength * 1.5 + uAudioPulse * 2.0) * uNeonMultiplier;
 
       // 3. Film Grain
       float grainNoise = hash(warpedUv + speedTime * 100.0) * 0.1 * uGrainMultiplier - 0.05 * uGrainMultiplier;
@@ -330,6 +334,7 @@ export const EffectShader = {
     }
   `
 };
+
 export const BackgroundShader = {
   vertexShader: `
     varying vec2 vUv;
