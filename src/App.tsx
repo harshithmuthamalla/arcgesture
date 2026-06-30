@@ -167,6 +167,7 @@ export default function App() {
   const [rhythmFeedback, setRhythmFeedback] = useState<{ text: string; color: string; time: number } | null>(null);
   const [rhythmHits, setRhythmHits] = useState({ perfect: 0, good: 0, late: 0, miss: 0 });
   const [cameraReleased, setCameraReleased] = useState(true);
+  const [medicalDiagramIndex, setMedicalDiagramIndex] = useState(0);
 
   // Expose tracker API
   const {
@@ -194,7 +195,13 @@ export default function App() {
     setControlMapping,
     processFrame,
     setErrorMsg
-  } = useHandTracker(videoRef, canvasRef, () => setEffectIndex((prev) => (prev + 1) % 7));
+  } = useHandTracker(videoRef, canvasRef, () => {
+    if (useCase === 'medical') {
+      setMedicalDiagramIndex((prev) => (prev + 1) % 3);
+    } else {
+      setEffectIndex((prev) => (prev + 1) % 7);
+    }
+  });
 
   // Video aspect ratio resize logic
   useEffect(() => {
@@ -1503,6 +1510,7 @@ export default function App() {
             shockwaveCenter={shockwaveCenter}
             audioReactive={audioReactive}
             isFieldLocked={isFieldLocked}
+            medicalDiagramIndex={medicalDiagramIndex}
           />
         )}
 
@@ -1550,7 +1558,7 @@ export default function App() {
                     onClick={() => { setUseCase(mode as any); playChimeSound(); }}
                     className={`relative px-3 py-1.5 rounded-full transition-all duration-300 ${useCase === mode ? 'text-cyan-400 border border-cyan-500/30 bg-cyan-950/20 shadow-[0_0_10px_rgba(6,182,212,0.2)]' : 'hover:text-white'}`}
                   >
-                    <span>{mode.toUpperCase() === 'PUZZLE' ? 'PUZZLE CAM' : mode.toUpperCase()}</span>
+                    <span>{mode === 'standard' ? 'HOLOGRAPHIC' : mode === 'puzzle' ? 'PUZZLE CAM' : mode.toUpperCase()}</span>
                     {hoverUseCase === mode && (
                       <span className="absolute bottom-0 left-1/4 w-1/2 h-[2px] bg-cyan-400 shadow-[0_0_5px_#22d3ee] transition-all" style={{ width: `${hoverProgress / 2}%` }} />
                     )}
@@ -1686,7 +1694,7 @@ export default function App() {
             )}
 
             {/* Standard Mode boundary SVG polygon */}
-            {handsTracked && useCase !== 'puzzle' && (
+            {handsTracked && useCase === 'standard' && (
               <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
                 <defs>
                   <filter id="glow">

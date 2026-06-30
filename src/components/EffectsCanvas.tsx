@@ -338,6 +338,7 @@ interface Hologram3DModelProps {
   docZoom: number;
   docPan: { x: number; y: number };
   isFieldLocked: boolean;
+  medicalDiagramIndex: number;
 }
 
 const Hologram3DModel: React.FC<Hologram3DModelProps> = ({
@@ -351,12 +352,15 @@ const Hologram3DModel: React.FC<Hologram3DModelProps> = ({
   audioReactive,
   docZoom,
   docPan,
-  isFieldLocked
+  isFieldLocked,
+  medicalDiagramIndex
 }) => {
   const groupRef = useRef<THREE.Group>(null);
   const gear1Ref = useRef<THREE.Group>(null);
   const gear2Ref = useRef<THREE.Group>(null);
   const brainRingRef = useRef<THREE.Mesh>(null);
+  const dnaRef = useRef<THREE.Group>(null);
+  const heartRef = useRef<THREE.Group>(null);
 
   useFrame((state) => {
     if (!groupRef.current) return;
@@ -420,6 +424,17 @@ const Hologram3DModel: React.FC<Hologram3DModelProps> = ({
       if (useCase === 'medical' && brainRingRef.current) {
         brainRingRef.current.position.y = Math.sin(state.clock.getElapsedTime() * 2.8) * 0.28;
       }
+
+      // DNA spin animation
+      if (useCase === 'medical' && medicalDiagramIndex === 1 && dnaRef.current) {
+        dnaRef.current.rotation.y = state.clock.getElapsedTime() * 1.8;
+      }
+
+      // Heartbeat animation
+      if (useCase === 'medical' && medicalDiagramIndex === 2 && heartRef.current) {
+        const beat = 1.0 + Math.max(0, Math.sin(state.clock.getElapsedTime() * 5.8)) * 0.14;
+        heartRef.current.scale.set(beat, beat, beat);
+      }
     } else {
       groupRef.current.visible = false;
     }
@@ -463,36 +478,100 @@ const Hologram3DModel: React.FC<Hologram3DModelProps> = ({
     return elements;
   }, [mainColor]);
 
-  return (
-    <group ref={groupRef}>
-      {/* 3D Medical Brain Scan model */}
-      {useCase === 'medical' && (
-        <group>
-          {/* Lobe Left */}
-          <mesh position={[-0.11, 0.03, 0]} scale={[1.3, 0.95, 0.9]}>
-            <sphereGeometry args={[0.2, 12, 12]} />
-            <meshBasicMaterial wireframe color={mainColor} transparent opacity={0.8} />
+  const dnaRungs = useMemo(() => {
+    const rungs = [];
+    const count = 12;
+    for (let i = 0; i < count; i++) {
+      const y = (i - (count - 1) / 2) * 0.05;
+      const angle = i * 0.42;
+      rungs.push(
+        <group key={i} position={[0, y, 0]} rotation={[0, -angle, 0]}>
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.005, 0.005, 0.32]} />
+            <meshBasicMaterial color={mainColor} transparent opacity={0.6} />
           </mesh>
-          {/* Lobe Right */}
-          <mesh position={[0.11, 0.03, 0]} scale={[1.3, 0.95, 0.9]}>
-            <sphereGeometry args={[0.2, 12, 12]} />
-            <meshBasicMaterial wireframe color={mainColor} transparent opacity={0.8} />
-          </mesh>
-          {/* Stem */}
-          <mesh position={[0, -0.2, -0.04]} rotation={[0.15, 0, 0]}>
-            <cylinderGeometry args={[0.05, 0.035, 0.2, 8]} />
-            <meshBasicMaterial wireframe color={mainColor} />
-          </mesh>
-          {/* Inner core */}
-          <mesh>
-            <sphereGeometry args={[0.1, 8, 8]} />
-            <meshBasicMaterial color={innerColor} transparent opacity={effectMode === 'xray' ? 0.8 : 0.3} />
-          </mesh>
-          {/* Scan ring */}
-          <mesh ref={brainRingRef} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[0.34, 0.012, 6, 24]} />
+          <mesh position={[0.16, 0, 0]}>
+            <sphereGeometry args={[0.024, 8, 8]} />
             <meshBasicMaterial color={mainColor} />
           </mesh>
+          <mesh position={[-0.16, 0, 0]}>
+            <sphereGeometry args={[0.024, 8, 8]} />
+            <meshBasicMaterial color={innerColor} />
+          </mesh>
+        </group>
+      );
+    }
+    return rungs;
+  }, [mainColor, innerColor]);
+
+  return (
+    <group ref={groupRef}>
+      {/* 3D Medical Mode models */}
+      {useCase === 'medical' && (
+        <group>
+          {/* Index 0: 3D Spatial Brain Scan */}
+          {medicalDiagramIndex === 0 && (
+            <group>
+              {/* Lobe Left */}
+              <mesh position={[-0.11, 0.03, 0]} scale={[1.3, 0.95, 0.9]}>
+                <sphereGeometry args={[0.2, 12, 12]} />
+                <meshBasicMaterial wireframe color={mainColor} transparent opacity={0.8} />
+              </mesh>
+              {/* Lobe Right */}
+              <mesh position={[0.11, 0.03, 0]} scale={[1.3, 0.95, 0.9]}>
+                <sphereGeometry args={[0.2, 12, 12]} />
+                <meshBasicMaterial wireframe color={mainColor} transparent opacity={0.8} />
+              </mesh>
+              {/* Stem */}
+              <mesh position={[0, -0.2, -0.04]} rotation={[0.15, 0, 0]}>
+                <cylinderGeometry args={[0.05, 0.035, 0.2, 8]} />
+                <meshBasicMaterial wireframe color={mainColor} />
+              </mesh>
+              {/* Inner core */}
+              <mesh>
+                <sphereGeometry args={[0.1, 8, 8]} />
+                <meshBasicMaterial color={innerColor} transparent opacity={effectMode === 'xray' ? 0.8 : 0.3} />
+              </mesh>
+              {/* Scan ring */}
+              <mesh ref={brainRingRef} rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.34, 0.012, 6, 24]} />
+                <meshBasicMaterial color={mainColor} />
+              </mesh>
+            </group>
+          )}
+
+          {/* Index 1: Holographic DNA Double Helix */}
+          {medicalDiagramIndex === 1 && (
+            <group ref={dnaRef}>
+              {dnaRungs}
+            </group>
+          )}
+
+          {/* Index 2: Cardiological Heart Ventricle Model */}
+          {medicalDiagramIndex === 2 && (
+            <group ref={heartRef}>
+              {/* Ventricle main body */}
+              <mesh>
+                <sphereGeometry args={[0.15, 12, 12]} />
+                <meshBasicMaterial wireframe color={mainColor} />
+              </mesh>
+              {/* Aorta arch */}
+              <mesh position={[0.05, 0.14, 0]} rotation={[0, 0, -0.25]}>
+                <cylinderGeometry args={[0.024, 0.024, 0.18, 8]} />
+                <meshBasicMaterial wireframe color={mainColor} />
+              </mesh>
+              {/* Pulmonary Artery */}
+              <mesh position={[-0.06, 0.1, 0]} rotation={[0, 0, 0.3]}>
+                <cylinderGeometry args={[0.02, 0.02, 0.15, 8]} />
+                <meshBasicMaterial wireframe color={mainColor} />
+              </mesh>
+              {/* Internal beating core */}
+              <mesh>
+                <sphereGeometry args={[0.08, 8, 8]} />
+                <meshBasicMaterial color={innerColor} transparent opacity={effectMode === 'xray' ? 0.85 : 0.4} />
+              </mesh>
+            </group>
+          )}
         </group>
       )}
 
@@ -556,6 +635,7 @@ interface EffectsCanvasProps {
   shockwaveCenter: { x: number; y: number };
   audioReactive: boolean;
   isFieldLocked: boolean;
+  medicalDiagramIndex: number;
 }
 
 export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
@@ -581,7 +661,8 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
   shockwaveTime,
   shockwaveCenter,
   audioReactive,
-  isFieldLocked
+  isFieldLocked,
+  medicalDiagramIndex
 }) => {
   if (!videoElement) return null;
 
@@ -630,6 +711,7 @@ export const EffectsCanvas: React.FC<EffectsCanvasProps> = ({
           docZoom={docZoom}
           docPan={docPan}
           isFieldLocked={isFieldLocked}
+          medicalDiagramIndex={medicalDiagramIndex}
         />
       </Canvas>
     </div>
